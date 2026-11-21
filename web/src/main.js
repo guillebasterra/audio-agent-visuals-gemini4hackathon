@@ -195,7 +195,7 @@ function getInterpolatedAgents(nowMs) {
 let fakeCrowd = null;
 let socket = null;
 
-// Audio engine (file playback + shared AnalyserNode + 16 kHz mono Int16 AudioWorklet)
+// Audio engine (file playback + live getUserMedia + shared AnalyserNode + 16 kHz mono Int16 AudioWorklet)
 const audio = new AudioEngine({
   onClock: (clockMsg) => {
     ui.setPlaying(clockMsg.playing);
@@ -219,6 +219,17 @@ const audio = new AudioEngine({
       socket.sendJson(ctrl);
     }
   },
+  onDevicesChanged: () => {
+    if (ui && ui.showPicker) {
+      ui.refreshLiveDevices(false);
+    }
+  },
+  onLiveEnded: (label) => {
+    if (ui) {
+      ui.setPlaying(false);
+      ui.setLiveError(`Input "${label}" disconnected.`);
+    }
+  },
 });
 
 let fileLoaded = false;
@@ -227,7 +238,7 @@ async function ensureDefaultTrackLoaded() {
   const tracks = ui.tracks.length > 0 ? ui.tracks : await ui.refreshTracks();
   if (tracks.length === 0) return false;
   const first = tracks[0];
-  ui.selectedTrack = first;
+  ui.setSource({ mode: "file", label: first });
   await audio.loadFile(`/tracks/${encodeURIComponent(first)}`, first);
   fileLoaded = true;
   return true;
@@ -235,7 +246,9 @@ async function ensureDefaultTrackLoaded() {
 
 const ui = new CrowdUI({
   onTogglePlay: async () => {
-    await ensureDefaultTrackLoaded();
+    if (audio.currentSourceMode === "file" && !audio.liveStream) {
+      await ensureDefaultTrackLoaded();
+    }
     await audio.togglePlay();
   },
   onCondition: (cond) => {
@@ -272,9 +285,28 @@ const ui = new CrowdUI({
     }
   },
   onSelectFile: async (url, label) => {
+    plate.clearTrails();
     await audio.loadFile(url, label);
     fileLoaded = true;
+    ui.setSource({ mode: "file", label });
     await audio.play();
+  },
+  onSelectLive: async (deviceId, label, opts = {}) => {
+    plate.clearTrails();
+    const settings = await audio.loadLiveDevice(deviceId, label, opts);
+    fileLoaded = false;
+    ui.setSource({
+      mode: "live",
+      label: settings.label,
+      deviceId: settings.deviceId,
+      trackSettings: settings,
+    });
+    // Refresh list silently now that mic permission is granted so hardware names are cached
+    ui.refreshLiveDevices(false);
+  },
+  onRequestLiveDevices: (requestPermission) => audio.listLiveDevices({ requestPermission }),
+  onToggleMonitor: (enabled) => {
+    audio.setMonitorToSpeakers(enabled);
   },
 });
 ui.setCondition(condition, false);
@@ -327,6 +359,12 @@ function frame(nowMs) {
   framesRendered += 1;
 
   const dsp = audio.update(nowMs);
+  ui.updateLiveStatus({
+    playing: audio.playing,
+    inputLevel: audio.inputLevel,
+    inputDb: audio.inputDb,
+    silentSec: audio.liveSilentSec,
+  });
   const agents = getInterpolatedAgents(nowMs);
 
   let musicEnergy = dsp.energy;
@@ -364,6 +402,8 @@ function frame(nowMs) {
       pcmRate: audio.getPcmChunksPerSec(),
       pcmTotal: audio.pcmChunksTotal,
       track: audio.currentLabel,
+      sourceMode: audio.currentSourceMode,
+      inputDb: audio.inputDb,
     });
   }
 
@@ -382,6 +422,18 @@ window.__agentCrowd = {
   ui,
   chat,
   ensureDefaultTrackLoaded,
+  listLiveDevices: (requestPermission = false) => audio.listLiveDevices({ requestPermission }),
+  loadLiveDevice: async (deviceId = "", label = "", opts = {}) => {
+    const settings = await audio.loadLiveDevice(deviceId, label, opts);
+    fileLoaded = false;
+    ui.setSource({
+      mode: "live",
+      label: settings.label,
+      deviceId: settings.deviceId,
+      trackSettings: settings,
+    });
+    return settings;
+  },
   setCondition: (cond) => {
     condition = cond;
     chat.setCondition(cond);
@@ -402,6 +454,13 @@ window.__agentCrowd = {
     pcmChunksSent: socket ? socket.pcmChunksSent : 0,
     pcmBytesSent: socket ? socket.pcmBytesSent : 0,
     playing: audio.playing,
+    sourceMode: audio.currentSourceMode,
+    sourceLabel: audio.currentLabel,
+    liveTrackSettings: audio.liveTrackSettings,
+    monitorLive: audio.monitorLive,
+    inputLevel: +audio.inputLevel.toFixed(3),
+    inputDb: +audio.inputDb.toFixed(1),
+    rawRms: +audio.rawRms.toFixed(5),
     workletReady: audio.workletReady,
     pcmChunksTotal: audio.pcmChunksTotal,
     lastChunkBytes: audio.lastChunkBytes,

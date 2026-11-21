@@ -124,12 +124,23 @@ def test_ws_audio_and_seek_integration() -> None:
                 assert st2["buffered_seconds"] == 0.0, st2
                 assert st2["playing"] is False, st2
 
+                # Switching to live source updates source/label, resets clock, and clears buffer
+                ws.send_bytes(chunk)
+                ws.send_json({"type": "control", "source": "live", "label": "BlackHole 2ch"})
+                ws.send_json({"type": "clock", "t": 0.25, "playing": True, "source": "live", "dsp": {"energy": 0.72}})
+                _ = ws.receive_json()
+
+                st3 = client.get("/api/status").json()
+                assert st3["source"] == "live", st3
+                assert st3["source_label"] == "BlackHole 2ch", st3
+                assert st3["buffered_seconds"] == 0.0, st3
+
             runtime.audio.close()
             wav_path = Path(tmp) / "ws_run" / "session.wav"
             assert wav_path.is_file()
             info = sf.info(str(wav_path))
-            assert abs(info.duration - 1.0) < 0.01, info.duration
-    print("PASS: /ws PCM buffering, seek clear, pause, and session.wav recording verified")
+            assert abs(info.duration - 1.25) < 0.01, info.duration
+    print("PASS: /ws PCM buffering, seek clear, live source switch, pause, and session.wav verified")
 
 
 def main() -> None:

@@ -42,6 +42,24 @@ npm --prefix web install
 npm --prefix web run dev
 ```
 
+### Live DJ Input Setup (macOS: Rekordbox + BlackHole 2ch or USB Mixer)
+
+Agent Crowd supports live audio capture directly from Rekordbox, Serato, Traktor, or a USB DJ mixer via `getUserMedia` with echo cancellation, noise suppression, and auto-gain control disabled. Everything downstream (60 fps FFT/kick DSP, 16 kHz PCM capture worklet, rolling 30 s ring filters, Gemini house ear/Decisions/Hydrogen asks, and `session.wav` recording) works identically to MP3 playback.
+
+1. **Option A — Rekordbox via BlackHole 2ch (speakers + browser simultaneously):**
+   - Install BlackHole 2ch: `brew install blackhole-2ch` (reboot or `sudo killall coreaudiod` if it doesn't appear immediately).
+   - Open **Audio MIDI Setup** (Spotlight → `Audio MIDI Setup`) → click `+` (bottom-left) → **Create Multi-Output Device**.
+   - Check both your **speakers/headphones** (set as Master Device) and **BlackHole 2ch** (enable Drift Correction on BlackHole).
+   - In **Rekordbox** → **Preferences → Audio**, select the **Multi-Output Device** as the Master Output (or enable PC Master Out routed to it).
+2. **Option B — USB Mixer / Controller directly:**
+   - Connect your mixer/controller over USB (e.g. Pioneer/AlphaTheta DDJ/DJM/CDJ or audio interface); it appears directly as an input device.
+3. **Select the live device in Agent Crowd:**
+   - Open `http://localhost:5173`, press **`I`** to open the Input Picker, click **Unlock names** (once, to grant macOS/Chrome microphone permission so hardware device names appear), and click **`BlackHole 2ch`** (or your USB mixer).
+   - The picker hides itself automatically. Browser speaker monitoring stays **off by default** (your DJ setup already feeds the room speakers), though a toggle is available inside the `I` picker alongside a live dBFS level meter.
+   - Press **`Space`** to pause/resume live capture, **`1`/`2`/`3`** to switch `shove` / `silent` / `talk`, **`C`** for the live chat feed, and **`R`** to reset the crowd.
+   - Every live session is automatically recorded to `runs/<timestamp>_<condition>_<seed>/session.wav` so you can replay or analyze it offline.
+   - **If live input shows `(no signal)`:** verify Rekordbox is playing to the Multi-Output Device containing `BlackHole 2ch`, verify macOS **System Settings → Privacy & Security → Microphone** allows Chrome, and confirm the `I` picker shows `raw audio (EC/NS/AGC off)`.
+
 ## Phase 0: Verified API Behavior & Measured Latencies
 
 Verified with `google-genai==3.6.1` (`v1beta`) using 16 kHz mono PCM WAV slices from `tracks/getuphereletsdance.mp3` via `.venv/bin/python -m server.phase0_check`:

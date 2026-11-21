@@ -186,10 +186,31 @@ class SimulationRuntime:
                 if cond == "shove":
                     self.mark_shove_dirty()
 
+            source_changed = False
             if "source" in msg and msg["source"] is not None:
-                self.crowd.source = str(msg["source"])
+                new_source = str(msg["source"])
+                if new_source != self.crowd.source:
+                    source_changed = True
+                self.crowd.source = new_source
             if "label" in msg and msg["label"] is not None:
-                self.crowd.source_label = str(msg["label"])
+                new_label = str(msg["label"])
+                if new_label != self.crowd.source_label:
+                    source_changed = True
+                self.crowd.source_label = new_label
+
+            if source_changed:
+                self.audio.clear_buffer()
+                if self.audio.recorded_samples > 0:
+                    # Start a fresh run folder + session.wav for the newly selected audio source
+                    self.run_logger.close()
+                    self.audio.close()
+                if self.crowd.source == "live":
+                    self.crowd.t = 0.0
+                logger.info(
+                    "Audio source switched: source=%s label=%r",
+                    self.crowd.source,
+                    self.crowd.source_label,
+                )
 
             action = msg.get("action")
             if action == "play":
@@ -244,6 +265,8 @@ class SimulationRuntime:
             "t": round(self.crowd.t, 3),
             "tick": self.crowd.tick,
             "playing": self.crowd.playing,
+            "source": self.crowd.source,
+            "source_label": self.crowd.source_label,
             "condition": self.crowd.condition,
             "seed": self.crowd.seed,
             "w": round(self.crowd.w, 3),

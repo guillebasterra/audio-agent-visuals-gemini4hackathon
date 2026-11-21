@@ -1,16 +1,22 @@
 // Shared Web Audio analysis (60 fps FFT features) + 16 kHz mono Int16 AudioWorklet capture.
-// Designed so input source (MP3 file vs. live getUserMedia in Phase L) is a single swappable function.
+// Single swappable source entry point (`connectSource`) shared by file playback and live getUserMedia input.
 
 const FFT_SIZE = 2048;
 const KICK_REFRACTORY_SEC = 0.12;
 const KICK_DECAY_TAU_SEC = 0.12;
 const CLOCK_INTERVAL_MS = 250; // 4 Hz
+const SILENCE_RMS_THRESHOLD = 0.0004;
+
+const DJ_DEVICE_PATTERN =
+  /(blackhole|loopback|rekordbox|pioneer|alphatheta|ddj|djm|cdj|xdj|xone|allen|traktor|serato|scarlett|focusrite|soundflower|vb-cable|multi-output|aggregate|usb\s+audio|mixer)/i;
 
 export class AudioEngine {
-  constructor({ onClock, onPcmChunk, onControl } = {}) {
+  constructor({ onClock, onPcmChunk, onControl, onDevicesChanged, onLiveEnded } = {}) {
     this.onClock = onClock || (() => {});
     this.onPcmChunk = onPcmChunk || (() => {});
     this.onControl = onControl || (() => {});
+    this.onDevicesChanged = onDevicesChanged || (() => {});
+    this.onLiveEnded = onLiveEnded || (() => {});
 
     this.ctx = null;
     this.analyser = null;
@@ -20,7 +26,11 @@ export class AudioEngine {
     this.currentSourceNode = null;
     this.currentSourceMode = "file"; // "file" | "live"
     this.currentLabel = "";
+    this.currentDeviceId = "";
     this.liveStream = null;
+    this.liveTrackSettings = null;
+    this.monitorLive = false;
+    this._monitorConnected = false;
 
     this.audioEl = document.createElement("audio");
     this.audioEl.crossOrigin = "anonymous";
@@ -29,7 +39,8 @@ export class AudioEngine {
     this.mediaElSource = null;
 
     this.playing = false;
-    this.sessionStartMs = 0;
+    this.liveElapsedMs = 0;
+    this.liveResumeMs = 0;
 
     // FFT buffers
     this.freqData = null;
@@ -38,10 +49,17 @@ export class AudioEngine {
 
     // Decaying running maxima for normalization
     this.maxBands = { sub: 0.002, bass: 0.002, mid: 0.001, high: 0.0004, rms: 0.03 };
+    this.smoothBands = null;
     this.fluxMean = 0.002;
     this.lastKickSec = -10;
     this.kickEnvelope = 0;
     this.lastBassAboveSec = 0;
+
+    // Live input level & silence monitor
+    this.rawRms = 0;
+    this.inputLevel = 0; // 0..1 log VU meter
+    this.inputDb = -96;
+    this.liveSilentSec = 0;
 
     // Rolling 10 s history of { t, energy } for energy_5s and trend
     this.energyHistory = [];
@@ -60,7 +78,7 @@ export class AudioEngine {
       bass_gap: 0,
     };
 
-    // Telemetry for Phase A verification & stats corner
+    // Telemetry for verification & stats corner
     this.pcmChunksTotal = 0;
     this.pcmChunkTimestamps = [];
     this.lastChunkBytes = 0;
@@ -70,19 +88,27 @@ export class AudioEngine {
     this._kickSinceLastClock = false;
 
     this._bindAudioElementEvents();
+    this._bindDeviceChange();
   }
 
   _bindAudioElementEvents() {
     this.audioEl.addEventListener("play", () => {
-      this._setPlaying(true);
+      if (this.currentSourceMode === "file") {
+        this._setPlaying(true);
+      }
     });
     this.audioEl.addEventListener("pause", () => {
-      this._setPlaying(false);
+      if (this.currentSourceMode === "file") {
+        this._setPlaying(false);
+      }
     });
     this.audioEl.addEventListener("ended", () => {
-      this._setPlaying(false);
+      if (this.currentSourceMode === "file") {
+        this._setPlaying(false);
+      }
     });
     this.audioEl.addEventListener("seeked", () => {
+      if (this.currentSourceMode !== "file") return;
       if (this.workletNode) {
         this.workletNode.port.postMessage({ reset: true });
       }
@@ -90,6 +116,44 @@ export class AudioEngine {
       this.lastBassAboveSec = this.getPlaybackTimeSec();
       this.onControl({ type: "control", action: "seek" });
     });
+  }
+
+  _bindDeviceChange() {
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      navigator.mediaDevices.addEventListener("devicechange", () => {
+        this.onDevicesChanged();
+      });
+    }
+  }
+
+  _resetDspState() {
+    this.maxBands = { sub: 0.002, bass: 0.002, mid: 0.001, high: 0.0004, rms: 0.03 };
+    this.smoothBands = null;
+    this.prevLowSpectrum = null;
+    this.fluxMean = 0.002;
+    this.kickEnvelope = 0;
+    this.lastBassAboveSec = 0;
+    this.energyHistory = [];
+    this.rawRms = 0;
+    this.inputLevel = 0;
+    this.inputDb = -96;
+    this.liveSilentSec = 0;
+    this._kickSinceLastClock = false;
+    this.dsp = {
+      sub: 0,
+      bass: 0,
+      mid: 0,
+      high: 0,
+      rms: 0,
+      kick: false,
+      energy: 0,
+      energy_5s: 0,
+      trend: 0,
+      bass_gap: 0,
+    };
+    if (this.workletNode) {
+      this.workletNode.port.postMessage({ reset: true });
+    }
   }
 
   async _ensureContext() {
@@ -103,6 +167,13 @@ export class AudioEngine {
       this.freqData = new Float32Array(this.analyser.frequencyBinCount);
       this.timeData = new Float32Array(this.analyser.fftSize);
 
+      // Shared zero-gain sink so Chromium/WebKit always pulls AnalyserNode & AudioWorklet
+      // in live mode even when speaker monitoring is disabled.
+      const silentGain = this.ctx.createGain();
+      silentGain.gain.value = 0;
+      silentGain.connect(this.ctx.destination);
+      this.analyser.connect(silentGain);
+
       if (this.ctx.audioWorklet) {
         try {
           await this.ctx.audioWorklet.addModule("/pcm-worklet.js");
@@ -111,11 +182,7 @@ export class AudioEngine {
             numberOfOutputs: 1,
             channelCount: 2,
           });
-          // Route silent output so Chromium/WebKit always pulls process() frames
-          const silentGain = this.ctx.createGain();
-          silentGain.gain.value = 0;
           this.workletNode.connect(silentGain);
-          silentGain.connect(this.ctx.destination);
 
           this.workletNode.port.onmessage = (evt) => {
             if (!this.playing) return;
@@ -162,17 +229,107 @@ export class AudioEngine {
     if (this.workletNode) {
       sourceNode.connect(this.workletNode);
     }
+    this._monitorConnected = Boolean(monitorToSpeakers);
     if (monitorToSpeakers) {
       sourceNode.connect(this.ctx.destination);
+    }
+  }
+
+  setMonitorToSpeakers(enabled) {
+    this.monitorLive = Boolean(enabled);
+    if (this.currentSourceMode !== "live" || !this.currentSourceNode || !this.ctx) return;
+    if (this.monitorLive && !this._monitorConnected) {
+      this.currentSourceNode.connect(this.ctx.destination);
+      this._monitorConnected = true;
+    } else if (!this.monitorLive && this._monitorConnected) {
+      try {
+        this.currentSourceNode.disconnect(this.ctx.destination);
+      } catch {
+        // Fallback: disconnect all and reconnect analysis + worklet
+        this.connectSource(this.currentSourceNode, { monitorToSpeakers: false });
+      }
+      this._monitorConnected = false;
+    }
+  }
+
+  /**
+   * Enumerate browser audio input devices (BlackHole 2ch, USB DJ mixer, mic).
+   * If `requestPermission` is true and labels are hidden by browser privacy rules,
+   * requests brief getUserMedia access to unlock real hardware names.
+   */
+  async listLiveDevices({ requestPermission = false } = {}) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+      return {
+        supported: false,
+        devices: [],
+        hasLabels: false,
+        error: "Live audio input unavailable in this browser context (requires localhost or HTTPS).",
+      };
+    }
+
+    let error = "";
+    try {
+      let raw = await navigator.mediaDevices.enumerateDevices();
+      let inputs = raw.filter((d) => d.kind === "audioinput");
+      let hasLabels = inputs.some((d) => d.label && d.label.trim().length > 0);
+
+      if (requestPermission && (!hasLabels || inputs.length === 0) && navigator.mediaDevices.getUserMedia) {
+        try {
+          const probeStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            },
+          });
+          for (const tr of probeStream.getTracks()) tr.stop();
+          raw = await navigator.mediaDevices.enumerateDevices();
+          inputs = raw.filter((d) => d.kind === "audioinput");
+          hasLabels = inputs.some((d) => d.label && d.label.trim().length > 0);
+        } catch (err) {
+          error = err && err.message ? err.message : String(err);
+        }
+      }
+
+      const devices = inputs.map((d, idx) => {
+        const cleanLabel = d.label && d.label.trim() ? d.label.trim() : `Audio Input ${idx + 1}`;
+        const recommended = DJ_DEVICE_PATTERN.test(cleanLabel);
+        return {
+          deviceId: d.deviceId,
+          groupId: d.groupId || "",
+          label: cleanLabel,
+          recommended,
+        };
+      });
+
+      // Float recommended loopback / USB DJ mixer devices to the top while preserving order otherwise
+      devices.sort((a, b) => Number(b.recommended) - Number(a.recommended));
+
+      return {
+        supported: true,
+        devices,
+        hasLabels,
+        error,
+      };
+    } catch (err) {
+      return {
+        supported: true,
+        devices: [],
+        hasLabels: false,
+        error: err && err.message ? err.message : String(err),
+      };
     }
   }
 
   async loadFile(url, label = "") {
     await this._ensureContext();
     this._stopLiveStream();
+    this._resetDspState();
 
     this.currentSourceMode = "file";
     this.currentLabel = label || url.split("/").pop() || "file";
+    this.currentDeviceId = "";
+    this.liveTrackSettings = null;
 
     if (!this.mediaElSource) {
       this.mediaElSource = this.ctx.createMediaElementSource(this.audioEl);
@@ -182,46 +339,116 @@ export class AudioEngine {
     this.audioEl.pause();
     this.audioEl.src = url;
     this.audioEl.load();
-    this.energyHistory = [];
     this.onControl({ type: "control", source: "file", label: this.currentLabel });
   }
 
-  async loadLiveDevice(deviceId, label = "live") {
+  async loadLiveDevice(deviceId = "", label = "", { monitorToSpeakers } = {}) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error("getUserMedia is not available (use localhost or HTTPS).");
+    }
     await this._ensureContext();
     this.audioEl.pause();
     this._stopLiveStream();
+    this._resetDspState();
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-      },
-    });
+    const baseConstraints = {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      voiceIsolation: false,
+      channelCount: { ideal: 2 },
+    };
+
+    const primaryConstraints = { ...baseConstraints };
+    if (deviceId && deviceId !== "default") {
+      primaryConstraints.deviceId = { exact: deviceId };
+    }
+
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: primaryConstraints });
+    } catch (err) {
+      // Fallback to ideal deviceId if the device ID changed after re-enumeration
+      if (deviceId && err && (err.name === "OverconstrainedError" || err.name === "NotFoundError")) {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { ...baseConstraints, deviceId: { ideal: deviceId } },
+        });
+      } else {
+        throw err;
+      }
+    }
+
+    const track = stream.getAudioTracks()[0] || null;
+    const settings = track && track.getSettings ? track.getSettings() : {};
+    const resolvedLabel =
+      (label && !/^Audio Input \d+$/.test(label) ? label : "") ||
+      (track && track.label ? track.label.trim() : "") ||
+      label ||
+      "Live Audio";
+
     this.liveStream = stream;
     this.currentSourceMode = "live";
-    this.currentLabel = label;
-    this.sessionStartMs = performance.now();
+    this.currentDeviceId = settings.deviceId || deviceId || "";
+    this.currentLabel = resolvedLabel;
+    this.liveTrackSettings = {
+      deviceId: this.currentDeviceId,
+      label: resolvedLabel,
+      sampleRate: settings.sampleRate || this.ctx.sampleRate,
+      channelCount: settings.channelCount || 2,
+      echoCancellation: Boolean(settings.echoCancellation),
+      noiseSuppression: Boolean(settings.noiseSuppression),
+      autoGainControl: Boolean(settings.autoGainControl),
+    };
+
+    this.liveElapsedMs = 0;
+    this.liveResumeMs = performance.now();
+
+    if (track) {
+      track.onended = () => {
+        if (this.liveStream === stream) {
+          this._setPlaying(false);
+          this.onLiveEnded(resolvedLabel);
+        }
+      };
+    }
+
+    const shouldMonitor =
+      typeof monitorToSpeakers === "boolean" ? monitorToSpeakers : this.monitorLive;
+    this.monitorLive = shouldMonitor;
 
     const streamSource = this.ctx.createMediaStreamSource(stream);
-    // Live mode does NOT play out of the browser (DJ setup already feeds speakers).
-    this.connectSource(streamSource, { monitorToSpeakers: false });
-    this._setPlaying(true);
+    // Live mode defaults to monitorToSpeakers: false (DJ setup already feeds speakers).
+    this.connectSource(streamSource, { monitorToSpeakers: shouldMonitor });
     this.onControl({ type: "control", source: "live", label: this.currentLabel });
+    this._setPlaying(true);
+
+    return this.liveTrackSettings;
   }
 
   _stopLiveStream() {
     if (this.liveStream) {
-      for (const track of this.liveStream.getTracks()) track.stop();
+      for (const track of this.liveStream.getTracks()) {
+        track.onended = null;
+        track.stop();
+      }
       this.liveStream = null;
     }
   }
 
   _setPlaying(isPlaying) {
-    this.playing = isPlaying;
+    const next = Boolean(isPlaying);
+    if (this.currentSourceMode === "live") {
+      const now = performance.now();
+      if (this.playing && !next && this.liveResumeMs > 0) {
+        this.liveElapsedMs += Math.max(0, now - this.liveResumeMs);
+        this.liveResumeMs = 0;
+      } else if (!this.playing && next) {
+        this.liveResumeMs = now;
+      }
+    }
+    this.playing = next;
     if (this.workletNode) {
-      this.workletNode.port.postMessage({ playing: isPlaying });
+      this.workletNode.port.postMessage({ playing: next });
     }
     this._emitClock(performance.now());
   }
@@ -231,7 +458,7 @@ export class AudioEngine {
     if (this.currentSourceMode === "file") {
       if (!this.audioEl.src) return;
       await this.audioEl.play();
-    } else {
+    } else if (this.liveStream) {
       this._setPlaying(true);
     }
   }
@@ -254,7 +481,8 @@ export class AudioEngine {
 
   getPlaybackTimeSec() {
     if (this.currentSourceMode === "live") {
-      return this.sessionStartMs > 0 ? (performance.now() - this.sessionStartMs) / 1000 : 0;
+      const running = this.playing && this.liveResumeMs > 0 ? performance.now() - this.liveResumeMs : 0;
+      return Math.max(0, (this.liveElapsedMs + running) / 1000);
     }
     return Number.isFinite(this.audioEl.currentTime) ? this.audioEl.currentTime : 0;
   }
@@ -277,6 +505,9 @@ export class AudioEngine {
     if (!this.analyser || !this.playing) {
       this.dsp.kick = false;
       this.dsp.energy *= Math.exp(-dt / 0.25);
+      this.inputLevel *= Math.exp(-dt / 0.15);
+      this.rawRms = 0;
+      this.liveSilentSec = 0;
       return this.dsp;
     }
 
@@ -336,6 +567,24 @@ export class AudioEngine {
       sq += s * s;
     }
     const rawRms = Math.sqrt(sq / this.timeData.length);
+    this.rawRms = rawRms;
+
+    // Log-scaled VU input meter (-60 dBFS .. 0 dBFS) & silence detection for live setup diagnostics
+    const dbFs = rawRms > 1e-6 ? 20 * Math.log10(rawRms) : -96;
+    this.inputDb = dbFs;
+    const normDb = Math.max(0, Math.min(1, (dbFs + 60) / 60));
+    const meterAlpha = normDb > this.inputLevel ? 0.45 : 0.14;
+    this.inputLevel += meterAlpha * (normDb - this.inputLevel);
+
+    if (this.currentSourceMode === "live") {
+      if (rawRms < SILENCE_RMS_THRESHOLD) {
+        this.liveSilentSec += dt;
+      } else {
+        this.liveSilentSec = 0;
+      }
+    } else {
+      this.liveSilentSec = 0;
+    }
 
     // Track a mildly smoothed band envelope for normalization so single 42 ms kick
     // transients don't crush a loud drop down to ~0.40, while slow decay (~180 s)
