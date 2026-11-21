@@ -1,29 +1,82 @@
-// Minimal keyboard controls + toggleable tiny stats corner (D) + auto-hiding input picker (I).
-// Visual TLC plate remains unobstructed as the main thing on screen (plan.md section 10).
+// Minimal keyboard controls + top-left mode banner + bottom-left legend + stats corner (D) + input picker (I).
+// Visual TLC plate remains unobstructed as the main thing on screen.
+
+const MODE_DESCRIPTIONS = {
+  shove: {
+    label: "SHOVE",
+    desc: "scripted crowd, no AI",
+  },
+  silent: {
+    label: "SILENT",
+    desc: "each agent listens and decides with Gemini",
+  },
+  talk: {
+    label: "TALK",
+    desc: "agents decide and argue to get past each other",
+  },
+};
 
 export class CrowdUI {
-  constructor({ onTogglePlay, onCondition, onToggleLabels, onToggleChat, onSelectFile } = {}) {
+  constructor({ onTogglePlay, onCondition, onToggleLabels, onToggleChat, onReset, onSelectFile } = {}) {
     this.onTogglePlay = onTogglePlay || (() => {});
     this.onCondition = onCondition || (() => {});
     this.onToggleLabels = onToggleLabels || (() => {});
     this.onToggleChat = onToggleChat || (() => {});
+    this.onReset = onReset || (() => {});
     this.onSelectFile = onSelectFile || (() => {});
 
     this.showStats = false;
     this.showPicker = false;
     this.chatOpen = false;
+    this.condition = "shove";
+    this._bannerTimer = null;
     this.tracks = [];
     this.selectedTrack = "";
 
     this._injectStyles();
     this._buildDom();
     this._bindKeys();
+    this.setCondition(this.condition, false);
     this.refreshTracks();
   }
 
   _injectStyles() {
     const style = document.createElement("style");
     style.textContent = `
+      .crowd-banner {
+        position: fixed;
+        top: 8px;
+        left: 12px;
+        padding: 4px 9px;
+        background: rgba(246, 235, 230, 0.76);
+        border: 1px solid rgba(55, 45, 48, 0.16);
+        border-left: 2.5px solid rgba(118, 52, 92, 0.52);
+        color: rgba(42, 34, 38, 0.86);
+        font: 10.5px/1.35 "IBM Plex Mono", monospace;
+        pointer-events: none;
+        z-index: 12;
+        white-space: nowrap;
+        transition: background 0.45s ease, border-color 0.45s ease, box-shadow 0.45s ease;
+      }
+      .crowd-banner.highlight {
+        background: rgba(252, 234, 224, 0.96);
+        border-color: rgba(196, 62, 68, 0.55);
+        border-left-color: rgba(212, 66, 38, 0.92);
+        box-shadow: 0 2px 12px rgba(192, 62, 72, 0.18);
+      }
+      .crowd-banner .mode-name {
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        color: #2c1e26;
+      }
+      .crowd-banner .mode-sep {
+        opacity: 0.45;
+        margin: 0 5px;
+      }
+      .crowd-banner .mode-desc {
+        color: rgba(52, 42, 47, 0.78);
+      }
+
       .crowd-stats {
         position: fixed;
         top: 12px;
@@ -44,8 +97,8 @@ export class CrowdUI {
 
       .crowd-picker {
         position: fixed;
-        top: 12px;
-        left: 12px;
+        top: 56px;
+        left: 14px;
         padding: 10px 12px;
         background: rgba(246, 235, 230, 0.94);
         border: 1px solid rgba(55, 45, 48, 0.28);
@@ -89,21 +142,24 @@ export class CrowdUI {
       .crowd-hint {
         position: fixed;
         bottom: 10px;
-        right: 12px;
-        font: 10px "IBM Plex Mono", monospace;
-        color: rgba(55, 45, 48, 0.45);
+        left: 14px;
+        font: 10.5px "IBM Plex Mono", monospace;
+        color: rgba(52, 42, 47, 0.58);
         pointer-events: none;
-        z-index: 5;
+        z-index: 8;
         transition: opacity 0.4s ease;
       }
-      .crowd-hint.quiet { opacity: 0.18; }
+      .crowd-hint.quiet { opacity: 0.36; }
       .crowd-stats.chat-open { right: 292px; }
-      .crowd-hint.chat-open { right: 292px; }
     `;
     document.head.appendChild(style);
   }
 
   _buildDom() {
+    this.bannerEl = document.createElement("div");
+    this.bannerEl.className = "crowd-banner";
+    document.body.appendChild(this.bannerEl);
+
     this.statsEl = document.createElement("div");
     this.statsEl.className = "crowd-stats";
     document.body.appendChild(this.statsEl);
@@ -114,14 +170,35 @@ export class CrowdUI {
 
     this.hintEl = document.createElement("div");
     this.hintEl.className = "crowd-hint";
-    this.hintEl.textContent = "Space play · 1/2/3 cond · C chat · L labels · D stats · I input";
+    this.hintEl.textContent =
+      "space play · 1 shove · 2 silent · 3 talk · C chat · L labels · D stats · I input · R reset";
     document.body.appendChild(this.hintEl);
+  }
+
+  setCondition(cond, highlight = true) {
+    const key = String(cond || "shove").toLowerCase();
+    const meta = MODE_DESCRIPTIONS[key] || MODE_DESCRIPTIONS.shove;
+    const changed = key !== this.condition;
+    this.condition = key;
+    this.bannerEl.innerHTML =
+      `<span class="mode-name">${meta.label}:</span> ` +
+      `<span class="mode-desc">${meta.desc}</span>`;
+
+    if (highlight && changed) {
+      this.bannerEl.classList.remove("highlight");
+      // Force reflow so rapid switches re-trigger the highlight cleanly
+      void this.bannerEl.offsetWidth;
+      this.bannerEl.classList.add("highlight");
+      if (this._bannerTimer) clearTimeout(this._bannerTimer);
+      this._bannerTimer = window.setTimeout(() => {
+        this.bannerEl.classList.remove("highlight");
+      }, 1500);
+    }
   }
 
   setChatOpen(open) {
     this.chatOpen = Boolean(open);
     this.statsEl.classList.toggle("chat-open", this.chatOpen);
-    this.hintEl.classList.toggle("chat-open", this.chatOpen);
   }
 
   _bindKeys() {
@@ -131,15 +208,20 @@ export class CrowdUI {
         e.preventDefault();
         this.onTogglePlay();
       } else if (e.key === "1") {
+        this.setCondition("shove", true);
         this.onCondition("shove");
       } else if (e.key === "2") {
+        this.setCondition("silent", true);
         this.onCondition("silent");
       } else if (e.key === "3") {
+        this.setCondition("talk", true);
         this.onCondition("talk");
       } else if (e.key === "c" || e.key === "C") {
         this.onToggleChat();
       } else if (e.key === "l" || e.key === "L") {
         this.onToggleLabels();
+      } else if (e.key === "r" || e.key === "R") {
+        this.onReset();
       } else if (e.key === "d" || e.key === "D") {
         this.showStats = !this.showStats;
         this.statsEl.classList.toggle("visible", this.showStats);
@@ -188,7 +270,6 @@ export class CrowdUI {
       if (file === this.selectedTrack) btn.classList.add("active");
       btn.addEventListener("click", () => {
         this.selectedTrack = file;
-        // Hide picker immediately after selection so plate fills the screen
         this.showPicker = false;
         this.pickerEl.classList.remove("visible");
         this.onSelectFile(`/tracks/${encodeURIComponent(file)}`, file);

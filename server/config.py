@@ -22,37 +22,51 @@ RUNS_DIR = ROOT_DIR / "runs"
 # Floor & agents
 N_AGENTS: int = 100
 N_LANES: int = 10
-DJ_POS: tuple[float, float] = (0.5, 0.0)
+DJ_POS: tuple[float, float] = (0.5, 0.0)  # center reference
+DJ_SEG_X0: float = 0.30  # wider hot-zone segment along the DJ line, x in [0.3, 0.7]
+DJ_SEG_X1: float = 0.70
 DJ_BOOTH_Y: float = 0.03
-AGENT_RADIUS: float = 0.036
+AGENT_RADIUS: float = 0.030  # base radius; scaled by archetype, proximity, and energy (front diehard ~0.045)
+ARCHETYPE_SIZE_MULT: dict[str, float] = {
+    "diehard": 1.20,
+    "between": 1.00,
+    "dancer": 0.85,
+}
+SIZE_JITTER_FRAC: float = 0.10
 PHYSICS_HZ: int = 30
 TICK_SECONDS: float = 3.0
 TICK_SECONDS_FALLBACK: float = 4.0
 
-# Rings by distance to DJ (edges at 0.2, 0.4, 0.6, 0.8 -> rings 1..5)
+# Rings by distance to DJ segment (edges at 0.2, 0.4, 0.6, 0.8 -> rings 1..5)
 RING_EDGES: tuple[float, ...] = (0.2, 0.4, 0.6, 0.8)
+RING_GAINS: tuple[float, ...] = (1.0, 0.90, 0.75, 0.60, 0.45)
 
-# Movement & collisions (tuned in Phase C for visible drop surge, jostle, and breakdown loosen)
-MAX_SPEED: float = 0.11  # units/s * (0.4 + 0.6 * E)
+# Movement & collisions (Phase E2: per-agent radii, section-driven movement, soft spring collisions)
+MAX_SPEED: float = 0.115  # units/s * (0.4 + 0.6 * E) * section_speed
 COLLISION_ITERATIONS: int = 4
 DENSITY_RADIUS_MULT: float = 2.5
 DENSITY_CAP: int = 8
-MAX_DIST_TO_DJ: float = 1.118  # sqrt(0.5^2 + 1.0^2)
+MAX_DIST_TO_DJ: float = 1.04403  # sqrt(0.30^2 + 1.0^2) from corner to DJ segment [0.3, 0.7]
 
-# Energy constants (per second; tuned in Phase C/C2 for bigger AGENT_RADIUS)
-ENERGY_A: float = 0.024  # front crush
-ENERGY_B: float = 0.007  # push
-ENERGY_D: float = 0.004  # dance
-ENERGY_C: float = 0.135  # rest recovery
-EXHAUST_RECOVER_E: float = 0.3
+# Energy constants (per second; Phase E2: front music charge feeds crowd, pushing/long dancing tires)
+ENERGY_A: float = 0.010  # front crush (halved from 0.024)
+ENERGY_B: float = 0.016  # push drain (pushing tires you away from front drops)
+ENERGY_D: float = 0.008  # sustained dance drain
+ENERGY_C: float = 0.110  # rest recovery
+ENERGY_G: float = 0.048  # music charge near DJ: g * v * local_music * w (calibrated for real MP3 w~1.4-1.9)
+EXHAUST_TRIGGER_E: float = 0.05  # rare exhaustion trigger
+EXHAUST_RECOVER_E: float = 0.25  # recover & rejoin floor
 
 # Mass / pushiness contrast constants (mass = MASS_BASE + MASS_PUSH_SCALE * pushiness^2 * E)
 MASS_BASE: float = 0.08
 MASS_PUSH_SCALE: float = 2.5
 
-# Happiness & contagion
+# Reward, happiness & hype/energy contagion
+REWARD_M: float = 0.60  # shared enjoyment of loud music near front
+U_NORM_DIVISOR: float = 1.15  # calibrates typical H to ~0.1-0.85 on real MP3 drops/breakdowns
 HAPPINESS_TAU: float = 10.0  # seconds
-CONTAGION_KAPPA: float = 0.15  # per second
+CONTAGION_KAPPA: float = 0.25  # H contagion per second
+ENERGY_CONTAGION_KAPPA: float = 0.10  # E contagion per second
 CONTAGION_RADIUS_MULT: float = 3.0
 
 # House ear section weights

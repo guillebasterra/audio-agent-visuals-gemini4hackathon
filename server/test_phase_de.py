@@ -71,9 +71,9 @@ class MockGeminiClient:
             elif qk.endswith("_rising"):
                 answers[qk] = SimpleNamespace(noul=0.78, confidence=0.80)
             elif qk.endswith("_action"):
-                # Agents with high keenness push; dancers dance; low energy rest
+                # Agents with high keenness push; dancers dance; tired agents rest
                 inst = qspec["instructions"]
-                if "energy 0.2" in inst or "energy 0.1" in inst:
+                if "energy tired" in inst:
                     act = "rest"
                 elif "keen 0.9" in inst or "keen 0.8" in inst or "keen 1.0" in inst:
                     act = "push"
@@ -274,12 +274,16 @@ def test_decide_questions_and_push_remap() -> None:
                 all_q.update(call["questions"])
             # Exhausted A0 must be skipped
             assert "a0_action" not in all_q and "a0_push" not in all_q
-            # Active A5 must have state+traits in BOTH a5_action AND a5_push
+            # Active A5 must have state+traits in BOTH a5_action AND a5_push (with plain-word energy)
             assert "a5_action" in all_q and "a5_push" in all_q
             for qk in ("a5_action", "a5_push"):
                 inst = all_q[qk]["instructions"]
                 assert "Traits: keen" in inst and "space" in inst, f"{qk} missing traits: {inst}"
-                assert "Now: energy" in inst and "crowding" in inst and "happiness" in inst, f"{qk} missing state: {inst}"
+                assert (
+                    any(w in inst for w in ("energy fresh", "energy ok", "energy tired"))
+                    and "crowding" in inst
+                    and "happiness" in inst
+                ), f"{qk} missing plain-word energy/state: {inst}"
             # Pending ask injected as noul
             assert "a6_ans_5" in all_q and all_q["a6_ans_5"]["type"] == "noul"
             assert "claims keenness 0.95" in all_q["a6_ans_5"]["instructions"]

@@ -151,8 +151,18 @@ class TickLoop:
             self._prev_push[a.id] = a.pushiness
             self._prev_exhausted[a.id] = a.exhausted
 
-        # Priority order: exhaustion > give-ups > pushing hard (cap at 5 server-side)
-        notable.extend(exhausted_ev[:2])
+        # Priority order: collapsed exhaustion summary > give-ups > pushing hard (cap at 5 server-side)
+        if len(exhausted_ev) == 1:
+            notable.append(exhausted_ev[0])
+        elif len(exhausted_ev) > 1:
+            ex_ids = [ev["agent"] for ev in exhausted_ev]
+            notable.append(
+                {
+                    "kind": "exhausted_summary",
+                    "agents": ex_ids,
+                    "text": f"{len(ex_ids)} agents retreating",
+                }
+            )
         notable.extend(giveup_ev[:2])
         notable.extend(push_hard_ev[:2])
         return notable[:5]
@@ -231,9 +241,11 @@ class TickLoop:
             )
             house_out, ring_outputs = await asyncio.gather(house_coro, rings_coro)
 
-        # 3. Apply house ear w (never shown to agents!)
+        # 3. Apply house ear w + smoothed section probabilities (never shown to agents!)
         crowd.use_dsp_proxy = False
         crowd.w = house_out.w
+        if house_out.ok and house_out.section_probs:
+            crowd.update_section_probs(house_out.section_probs)
         crowd.house_latest = house_out.to_log_dict()
 
         # Track API telemetry

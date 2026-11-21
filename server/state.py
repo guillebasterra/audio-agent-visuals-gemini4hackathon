@@ -10,14 +10,19 @@ import numpy as np
 
 from server.config import (
     AGENT_RADIUS,
+    ARCHETYPE_SIZE_MULT,
     DENSITY_CAP,
     DENSITY_RADIUS_MULT,
     DJ_BOOTH_Y,
     DJ_POS,
+    DJ_SEG_X0,
+    DJ_SEG_X1,
     MAX_DIST_TO_DJ,
     N_AGENTS,
     N_LANES,
     RING_EDGES,
+    RING_GAINS,
+    SIZE_JITTER_FRAC,
 )
 
 LANE_LABELS: list[str] = ["B", "C", "E", "G", "H", "L", "M", "P", "S", "Ś"]
@@ -25,10 +30,11 @@ LANE_LABELS: list[str] = ["B", "C", "E", "G", "H", "L", "M", "P", "S", "Ś"]
 VALID_ACTIONS: tuple[str, ...] = ("hold", "push", "yield", "rest", "dance", "retreat")
 VALID_CONDITIONS: tuple[str, ...] = ("shove", "silent", "talk")
 
+# Phase E2 softened trait spread: dancers still prefer room but want to be near loud drops too
 ARCHETYPE_BASE_TRAITS: dict[str, tuple[float, float]] = {
-    "diehard": (0.9, 0.1),
-    "dancer": (0.3, 0.9),
-    "between": (0.5, 0.5),
+    "diehard": (0.80, 0.35),
+    "between": (0.55, 0.55),
+    "dancer": (0.45, 0.70),
 }
 
 X_MIN: float = AGENT_RADIUS
@@ -36,10 +42,20 @@ X_MAX: float = 1.0 - AGENT_RADIUS
 Y_MIN: float = DJ_BOOTH_Y + AGENT_RADIUS
 Y_MAX: float = 1.0 - AGENT_RADIUS
 
+DEFAULT_SECTION_PROBS: dict[str, float] = {
+    "drop": 0.0,
+    "build": 0.0,
+    "groove": 1.0,
+    "breakdown": 0.0,
+    "intro": 0.0,
+    "outro": 0.0,
+    "other": 0.0,
+}
+
 
 @dataclass
 class Agent:
-    """Single agent on the dancefloor (plan.md section 4)."""
+    """Single agent on the dancefloor (plan.md section 4 + Phase E2 sizing/local_music)."""
 
     id: int
     x: float
@@ -51,6 +67,9 @@ class Agent:
     s: float = 0.5
     archetype: str = "between"
     lane: int = 0
+    size_mult: float = 1.0
+    radius: float = AGENT_RADIUS
+    local_music: float = 0.0
     action: str = "hold"
     pushiness: float = 0.3
     target: tuple[float, float] = (0.5, 0.9)
@@ -65,18 +84,25 @@ class Agent:
     action_probs: dict[str, float] = field(default_factory=dict)
 
 
+def dj_closest_point(x: float, y: float) -> tuple[float, float]:
+    """Closest point on the DJ hot-zone segment x in [DJ_SEG_X0, DJ_SEG_X1], y = 0."""
+    cx = DJ_SEG_X0 if x < DJ_SEG_X0 else (DJ_SEG_X1 if x > DJ_SEG_X1 else x)
+    return (cx, DJ_POS[1])
+
+
 def dist_to_dj(x: float, y: float) -> float:
-    """Euclidean distance from floor coordinate (x, y) to the DJ booth."""
-    return math.hypot(x - DJ_POS[0], y - DJ_POS[1])
+    """Euclidean distance from floor coordinate (x, y) to the DJ hot-zone segment."""
+    cx, cy = dj_closest_point(x, y)
+    return math.hypot(x - cx, y - cy)
 
 
 def proximity_for_pos(x: float, y: float) -> float:
-    """Normalized proximity v in [0, 1], where 1 is right at the DJ."""
+    """Normalized proximity v in [0, 1], where 1 is flush against the DJ segment."""
     return max(0.0, min(1.0, 1.0 - dist_to_dj(x, y) / MAX_DIST_TO_DJ))
 
 
 def ring_for_distance(dist: float) -> int:
-    """Map distance to DJ into acoustic ring 1 (front) .. 5 (back)."""
+    """Map distance to DJ segment into acoustic ring 1 (front) .. 5 (back)."""
     for idx, edge in enumerate(RING_EDGES, start=1):
         if dist < edge:
             return idx
@@ -86,6 +112,32 @@ def ring_for_distance(dist: float) -> int:
 def ring_for_agent(agent: Agent) -> int:
     """Return ring index 1..5 for an agent based on its current position."""
     return ring_for_distance(dist_to_dj(agent.x, agent.y))
+
+
+def ring_gain_for_distance(dist: float) -> float:
+    """Acoustic level multiplier for ring 1..5 (1.0, 0.9, 0.75, 0.6, 0.45)."""
+    r = ring_for_distance(dist)
+    return RING_GAINS[min(len(RING_GAINS) - 1, max(0, r - 1))]
+
+
+def ring_gain_for_agent(agent: Agent) -> float:
+    return ring_gain_for_distance(dist_to_dj(agent.x, agent.y))
+
+
+def agent_radius_for(size_mult: float, v: float, E: float) -> float:
+    """Dynamic per-agent physical radius: proximity (0.80x..1.25x) * archetype * tired deflation (<=15%)."""
+    prox_scale = 0.80 + 0.45 * max(0.0, min(1.0, v))
+    energy_scale = 0.85 + 0.15 * max(0.0, min(1.0, E))
+    return float(AGENT_RADIUS * size_mult * prox_scale * energy_scale)
+
+
+def energy_word(E: float) -> str:
+    """Plain-word energy label for agent prompts (fresh / ok / tired)."""
+    if E >= 0.62:
+        return "fresh"
+    if E >= 0.28:
+        return "ok"
+    return "tired"
 
 
 @dataclass
@@ -112,6 +164,24 @@ class CrowdState:
     kick_times: list[float] = field(default_factory=list)
     house_latest: dict[str, Any] = field(default_factory=dict)
     rings_latest: dict[int, dict[str, Any]] = field(default_factory=dict)
+    section_probs_smooth: dict[str, float] = field(default_factory=lambda: dict(DEFAULT_SECTION_PROBS))
+    _section_initialized: bool = False
+
+    def update_section_probs(self, raw_probs: dict[str, float] | None, alpha: float = 0.45) -> None:
+        """Smooth house-ear section probabilities over ~2-3 ticks for movement scaling."""
+        if not raw_probs:
+            return
+        total = sum(max(0.0, float(v)) for v in raw_probs.values())
+        if total <= 1e-6:
+            return
+        norm = {k: max(0.0, float(raw_probs.get(k, 0.0))) / total for k in DEFAULT_SECTION_PROBS}
+        if not self._section_initialized:
+            self.section_probs_smooth = norm
+            self._section_initialized = True
+        else:
+            for k in DEFAULT_SECTION_PROBS:
+                prev = self.section_probs_smooth.get(k, 0.0)
+                self.section_probs_smooth[k] = prev + alpha * (norm[k] - prev)
 
     def record_yield(self, yielder_id: int, asker_id: int) -> None:
         """Increment yield counter yielded_to[yielder][asker]."""
@@ -156,7 +226,7 @@ class CrowdState:
                 self.energy_5s = self.music_energy
 
     def init_payload(self) -> dict[str, Any]:
-        """Section 9 WebSocket init payload sent on client connect."""
+        """Section 9 WebSocket init payload sent on client connect (+ Phase E2 size_mult & dj_segment)."""
         return {
             "type": "init",
             "agents": [
@@ -166,15 +236,18 @@ class CrowdState:
                     "lane": int(a.lane),
                     "k": round(float(a.k), 4),
                     "s": round(float(a.s), 4),
+                    "size_mult": round(float(a.size_mult), 4),
                 }
                 for a in self.agents
             ],
             "n_lanes": len(self.lane_labels),
             "lane_labels": list(self.lane_labels),
+            "dj_segment": [DJ_SEG_X0, DJ_SEG_X1],
+            "condition": self.condition,
         }
 
     def physics_payload(self) -> dict[str, Any]:
-        """Section 9 WebSocket 30 Hz physics frame."""
+        """Section 9 WebSocket 30 Hz physics frame (+ Phase E2 trailing radius, v, local_music)."""
         return {
             "type": "physics",
             "t": round(float(self.t), 3),
@@ -190,6 +263,9 @@ class CrowdState:
                     round(float(a.H), 4),
                     a.action,
                     round(float(a.pressure), 4),
+                    round(float(a.radius), 4),
+                    round(float(a.v), 4),
+                    round(float(a.local_music), 4),
                 ]
                 for a in self.agents
             ],
@@ -217,6 +293,7 @@ def _populate_initial_derived(agents: list[Agent]) -> None:
     for i, agent in enumerate(agents):
         agent.v = proximity_for_pos(agent.x, agent.y)
         agent.rho = float(rhos[i])
+        agent.radius = agent_radius_for(agent.size_mult, agent.v, agent.E)
 
 
 def init_crowd(
@@ -265,6 +342,8 @@ def init_crowd(
         base_k, base_s = ARCHETYPE_BASE_TRAITS[archetype]
         k = float(np.clip(base_k + rng.uniform(-0.1, 0.1), 0.0, 1.0))
         s = float(np.clip(base_s + rng.uniform(-0.1, 0.1), 0.0, 1.0))
+        base_size = ARCHETYPE_SIZE_MULT.get(archetype, 1.0)
+        size_mult = float(base_size * (1.0 + rng.uniform(-SIZE_JITTER_FRAC, SIZE_JITTER_FRAC)))
 
         # Stagger slots across 2 sub-columns inside each lane with gentle jitter
         lane_center_x = X_MIN + (lane + 0.5) * lane_width
@@ -288,6 +367,7 @@ def init_crowd(
                 s=s,
                 archetype=archetype,
                 lane=lane,
+                size_mult=size_mult,
                 action="hold",
                 pushiness=0.3,
                 target=(x, y),

@@ -5,7 +5,7 @@ precision highp float;
 layout(location = 0) in vec2 aQuad;
 // Per-instance attributes
 layout(location = 1) in vec4 aPosVel;     // (x_gl, y_gl, vx_gl, vy_gl) in plate units
-layout(location = 2) in vec4 aShape;      // (r_pulse, E, pressure, 0)
+layout(location = 2) in vec4 aShape;      // (r_pulse, E, pressure, vibrancy)
 layout(location = 3) in vec3 aAbsorbance; // (-ln(max(c, 0.04)))
 
 uniform vec2 uResolution;
@@ -42,5 +42,6 @@ void main() {
 
   vLocal = aQuad * span;
   vAbs = aAbsorbance;
-  vAmount = 0.06 * (0.3 + 0.7 * E) * uStoreScale;
+  float vib = clamp(aShape.w, 0.0, 1.0);
+  vAmount = 0.068 * (0.28 + 0.72 * E) * (0.35 + 0.65 * vib) * uStoreScale;
 }

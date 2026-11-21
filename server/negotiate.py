@@ -17,9 +17,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from server.config import AGENT_RADIUS, DJ_POS, MAX_ASKS_FALLBACK, MAX_ASKS_PER_TICK, MODEL_HYDROGEN
+from server.config import AGENT_RADIUS, MAX_ASKS_FALLBACK, MAX_ASKS_PER_TICK, MODEL_HYDROGEN
 from server.gemini_client import GeminiClient
-from server.state import Agent, CrowdState, ring_for_agent
+from server.state import Agent, CrowdState, dj_closest_point, energy_word, ring_for_agent
 
 logger = logging.getLogger("agent_crowd.negotiate")
 
@@ -83,18 +83,18 @@ def detect_contests(
     max_asks: int = MAX_ASKS_PER_TICK,
     busy_pairs: set[tuple[int, int]] | None = None,
 ) -> list[Contest]:
-    """Find blocked pushing agents with a non-yielding neighbor within 2.2*R in ±35° toward DJ."""
+    """Find blocked pushing agents with a non-yielding neighbor within contact reach in ±35° toward DJ segment."""
     agents = crowd.agents
-    max_dist = CONTEST_DIST_MULT * AGENT_RADIUS
-    max_dist_sq = max_dist * max_dist
+    base_max_dist = CONTEST_DIST_MULT * AGENT_RADIUS
     busy = busy_pairs or set()
 
     candidates: list[Contest] = []
     for asker in agents:
         if asker.exhausted or asker.action != "push":
             continue
-        to_dj_x = DJ_POS[0] - asker.x
-        to_dj_y = DJ_POS[1] - asker.y
+        dj_cx, dj_cy = dj_closest_point(asker.x, asker.y)
+        to_dj_x = dj_cx - asker.x
+        to_dj_y = dj_cy - asker.y
         dj_dist = math.hypot(to_dj_x, to_dj_y)
         if dj_dist < 1e-6:
             continue
@@ -107,10 +107,11 @@ def detect_contests(
                 continue
             if (asker.id, other.id) in busy:
                 continue
+            pair_max = max(base_max_dist, 1.15 * (asker.radius + other.radius))
             dx = other.x - asker.x
             dy = other.y - asker.y
             d2 = dx * dx + dy * dy
-            if d2 > max_dist_sq or d2 < 1e-10:
+            if d2 > pair_max * pair_max or d2 < 1e-10:
                 continue
             d = math.sqrt(d2)
             cos_ang = (dx * ux + dy * uy) / d
@@ -147,7 +148,7 @@ def build_ask_prompt(
     crowd: CrowdState,
     ring_heard: dict[str, Any] | None,
 ) -> tuple[str, str]:
-    """Build Hydrogen ask prompt + short log summary (never revealing hidden info)."""
+    """Build Hydrogen ask prompt + short log summary (plain-word energy, never revealing hidden info)."""
     r_asker = ring_for_agent(asker)
     r_blocker = ring_for_agent(blocker)
     heard_sec = (ring_heard or {}).get("section", "groove")
@@ -156,19 +157,20 @@ def build_ask_prompt(
 
     y_ab = crowd.yield_count(asker.id, blocker.id)
     y_ba = crowd.yield_count(blocker.id, asker.id)
-    b_energy = _apparent_energy_bucket(blocker.E)
+    a_energy = energy_word(asker.E)
+    b_energy = energy_word(blocker.E)
 
     prompt = (
         f"You are A{asker.id} in ring {r_asker} of 5 from the DJ (1=front). "
         f"Your traits: keen={asker.k:.2f}, space={asker.s:.2f}. "
-        f"Your state: energy={asker.E:.2f}, happiness={asker.H:.2f}. "
+        f"Your state: energy={a_energy}, happiness={asker.H:.2f}. "
         f"Music you hear: section={heard_sec}, drop_eta={heard_eta}, rising={heard_rise:.2f}.\n"
         f"Directly ahead of you is A{blocker.id} (ring {r_blocker}, apparent energy {b_energy}, action={blocker.action}).\n"
         f"History: you have yielded to A{blocker.id} {y_ab} times; A{blocker.id} has yielded to you {y_ba} times.\n"
         f"Ask A{blocker.id} to let you pass in <= 20 words, and give your claimed_keenness (0..1)."
     )
     summary = (
-        f"A{asker.id}(k={asker.k:.2f},E={asker.E:.2f},r{r_asker},heard={heard_sec}/{heard_eta})->"
+        f"A{asker.id}(k={asker.k:.2f},E={a_energy},r{r_asker},heard={heard_sec}/{heard_eta})->"
         f"A{blocker.id}(r{r_blocker},E={b_energy},{blocker.action},y={y_ab}/{y_ba})"
     )
     return prompt, summary

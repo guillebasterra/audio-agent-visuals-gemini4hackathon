@@ -63,14 +63,25 @@ function unpackPhysicsAgents(rawAgents) {
       H: row[7],
       action: row[8],
       pressure: row[9],
+      r: row.length > 10 ? row[10] : undefined,
+      v: row.length > 11 ? row[11] : undefined,
+      localMusic: row.length > 12 ? row[12] : undefined,
     };
   }
   return out;
 }
 
 function handleInit(msg) {
+  if (msg.condition) {
+    condition = msg.condition;
+    chat.setCondition(condition);
+    ui.setCondition(condition, false);
+  }
   if (msg.lane_labels) {
     overlay.setLaneLabels(msg.lane_labels);
+  }
+  if (msg.dj_segment) {
+    overlay.setDjSegment(msg.dj_segment);
   }
   agentMetaById = new Map();
   for (const a of msg.agents || []) {
@@ -80,6 +91,7 @@ function handleInit(msg) {
   currFrame = null;
   currentAgentById.clear();
   asksById.clear();
+  chat.clear();
   plate.clearTrails();
 }
 
@@ -105,6 +117,7 @@ function handleDecision(msg) {
   if (msg.condition) {
     condition = msg.condition;
     chat.setCondition(condition);
+    ui.setCondition(condition, false);
   }
   const newAsks = msg.asks || [];
   const newAnswers = msg.answers || [];
@@ -165,6 +178,12 @@ function getInterpolatedAgents(nowMs) {
     dst.H = a0.H + (a1.H - a0.H) * t;
     dst.action = a1.action;
     dst.pressure = a0.pressure + (a1.pressure - a0.pressure) * t;
+    dst.r = a0.r !== undefined && a1.r !== undefined ? a0.r + (a1.r - a0.r) * t : a1.r;
+    dst.v = a0.v !== undefined && a1.v !== undefined ? a0.v + (a1.v - a0.v) * t : a1.v;
+    dst.localMusic =
+      a0.localMusic !== undefined && a1.localMusic !== undefined
+        ? a0.localMusic + (a1.localMusic - a0.localMusic) * t
+        : a1.localMusic;
   }
   return interpAgents;
 }
@@ -218,6 +237,7 @@ const ui = new CrowdUI({
   onCondition: (cond) => {
     condition = cond;
     chat.setCondition(cond);
+    ui.setCondition(cond, true);
     if (fakeCrowd) fakeCrowd.setCondition(cond);
     if (socket) {
       socket.sendJson({ type: "control", condition: cond });
@@ -229,12 +249,31 @@ const ui = new CrowdUI({
   onToggleChat: () => {
     chat.toggle();
   },
+  onReset: () => {
+    asksById.clear();
+    chat.clear();
+    plate.clearTrails();
+    if (fakeCrowd) {
+      fakeCrowd.stop();
+      fakeCrowd = new FakeCrowd({
+        seed: 42,
+        onInit: handleInit,
+        onPhysics: handlePhysics,
+        onDecision: handleDecision,
+      });
+      fakeCrowd.setCondition(condition);
+      fakeCrowd.start();
+    } else if (socket) {
+      socket.sendJson({ type: "control", action: "reset", condition });
+    }
+  },
   onSelectFile: async (url, label) => {
     await audio.loadFile(url, label);
     fileLoaded = true;
     await audio.play();
   },
 });
+ui.setCondition(condition, false);
 
 if (isFakeMode) {
   fakeCrowd = new FakeCrowd({
@@ -250,15 +289,12 @@ if (isFakeMode) {
     onPhysics: handlePhysics,
     onDecision: handleDecision,
     onStatus: (isUp) => {
-      if (isUp) {
-        socket.sendJson({ type: "control", condition });
-        if (audio.currentLabel) {
-          socket.sendJson({
-            type: "control",
-            source: audio.currentSourceMode,
-            label: audio.currentLabel,
-          });
-        }
+      if (isUp && audio.currentLabel) {
+        socket.sendJson({
+          type: "control",
+          source: audio.currentSourceMode,
+          label: audio.currentLabel,
+        });
       }
     },
   });
@@ -345,6 +381,7 @@ window.__agentCrowd = {
   setCondition: (cond) => {
     condition = cond;
     chat.setCondition(cond);
+    ui.setCondition(cond, true);
     if (fakeCrowd) fakeCrowd.setCondition(cond);
     if (socket) socket.sendJson({ type: "control", condition: cond });
   },

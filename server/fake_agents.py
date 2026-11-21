@@ -8,10 +8,10 @@ from typing import Any
 
 import numpy as np
 
-from server.config import AGENT_RADIUS, PHYSICS_HZ
+from server.config import AGENT_RADIUS, DJ_BOOTH_Y, PHYSICS_HZ
 from server.physics import PhysicsEngine
 from server.shove import apply_shove_actions
-from server.state import CrowdState, X_MAX, X_MIN, Y_MAX, Y_MIN, init_crowd
+from server.state import CrowdState, init_crowd
 
 # Default synthetic 4-phase envelope: quiet intro -> loud drop -> quiet breakdown -> loud drop
 DEFAULT_PHASES: tuple[tuple[str, float, float], ...] = (
@@ -37,30 +37,32 @@ def envelope_for_time(
 
 
 def _pairwise_max_overlap(crowd: CrowdState) -> float:
-    """Compute maximum pairwise circle overlap depth across all agent pairs."""
+    """Compute maximum pairwise overlap fraction ((r_i+r_j - d) / (r_i+r_j)) across all agent pairs."""
     n = len(crowd.agents)
     if n < 2:
         return 0.0
     pos = np.array([[a.x, a.y] for a in crowd.agents], dtype=np.float64)
+    rad = np.array([a.radius for a in crowd.agents], dtype=np.float64)
     dx = pos[:, 0:1] - pos[None, :, 0]
     dy = pos[:, 1:2] - pos[None, :, 1]
     dist = np.sqrt(dx * dx + dy * dy)
     iu = np.triu_indices(n, k=1)
-    min_dist = 2.0 * AGENT_RADIUS
-    overlaps = np.maximum(0.0, min_dist - dist[iu])
+    min_dist = (rad[:, None] + rad[None, :])[iu]
+    overlaps = np.maximum(0.0, min_dist - dist[iu]) / np.maximum(min_dist, 1e-6)
     return float(overlaps.max()) if overlaps.size > 0 else 0.0
 
 
 def _max_wall_violation(crowd: CrowdState) -> float:
-    """Return maximum distance any agent sits outside legal floor bounds."""
+    """Return maximum distance any agent sits outside its legal per-agent-radius floor bounds."""
     worst = 0.0
     for a in crowd.agents:
+        r = a.radius
         worst = max(
             worst,
-            X_MIN - a.x,
-            a.x - X_MAX,
-            Y_MIN - a.y,
-            a.y - Y_MAX,
+            r - a.x,
+            a.x - (1.0 - r),
+            (DJ_BOOTH_Y + r) - a.y,
+            a.y - (1.0 - r),
         )
     return max(0.0, float(worst))
 

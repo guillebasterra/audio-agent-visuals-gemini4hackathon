@@ -123,6 +123,15 @@ class SimulationRuntime:
 
     async def reset_crowd(self, seed: int | None = None, condition: str | None = None) -> None:
         """Re-initialize crowd state, physics, tick loop, logs & recorder; broadcast fresh `init`."""
+        # Cancel any in-flight tick so stale decision frames cannot arrive after reset
+        if self._tick_task is not None and not self._tick_task.done():
+            self._tick_task.cancel()
+            try:
+                await self._tick_task
+            except asyncio.CancelledError:
+                pass
+            self._tick_task = None
+
         next_seed = self.crowd.seed if seed is None else int(seed)
         next_cond = self.crowd.condition if condition is None else str(condition)
         if next_cond not in VALID_CONDITIONS:
@@ -131,6 +140,7 @@ class SimulationRuntime:
         self.physics.reset()
         if self.tick_loop is not None:
             self.tick_loop.reset()
+            self._tick_task = asyncio.create_task(self._tick_runner(), name="tick_loop")
         self.run_logger.close()
         self.audio.close()
         self.audio.clear_buffer()
@@ -216,6 +226,20 @@ class SimulationRuntime:
                         sum((a.vx * a.vx + a.vy * a.vy) ** 0.5 for a in group) / len(group), 4
                     ),
                 }
+        front_third = [a for a in agents if a.y <= 0.35]
+        mid_third = [a for a in agents if 0.35 < a.y <= 0.68]
+        back_third = [a for a in agents if a.y > 0.68]
+
+        def _zone_stats(grp: list[Any]) -> dict[str, float]:
+            if not grp:
+                return {"count": 0, "mean_H": 0.0, "mean_E": 0.0, "mean_v": 0.0}
+            return {
+                "count": len(grp),
+                "mean_H": round(sum(a.H for a in grp) / len(grp), 4),
+                "mean_E": round(sum(a.E for a in grp) / len(grp), 4),
+                "mean_v": round(sum(a.v for a in grp) / len(grp), 4),
+            }
+
         return {
             "t": round(self.crowd.t, 3),
             "tick": self.crowd.tick,
@@ -225,6 +249,7 @@ class SimulationRuntime:
             "w": round(self.crowd.w, 3),
             "use_dsp_proxy": self.crowd.use_dsp_proxy,
             "house": self.crowd.house_latest,
+            "section_probs_smooth": {k: round(v, 3) for k, v in self.crowd.section_probs_smooth.items()},
             "music_energy": round(self.crowd.music_energy, 3),
             "energy_5s": round(self.crowd.energy_5s, 3),
             "buffered_seconds": round(self.audio.buffered_seconds(), 3),
@@ -239,8 +264,13 @@ class SimulationRuntime:
             "mean_H": round(sum(a.H for a in agents) / n, 4),
             "max_H": round(max((a.H for a in agents), default=0.0), 4),
             "top20_diehard": sum(
-                1 for a in sorted(agents, key=lambda ag: ag.y)[:20] if a.archetype == "diehard"
+                1 for a in sorted(agents, key=lambda ag: ag.v, reverse=True)[:20] if a.archetype == "diehard"
             ),
+            "zones": {
+                "front": _zone_stats(front_third),
+                "mid": _zone_stats(mid_third),
+                "back": _zone_stats(back_third),
+            },
             "exhausted_count": sum(1 for a in agents if a.exhausted),
             "resting_or_retreating": sum(1 for a in agents if a.action in ("rest", "retreat")),
             "pushing_count": sum(1 for a in agents if a.action == "push"),

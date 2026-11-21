@@ -16,6 +16,7 @@ export class OverlayRenderer {
     this.rightReservePx = 0;
     this.plateRect = { ox: 0, oy: 0, size: 1 };
     this.laneLabels = DEFAULT_LANE_LABELS;
+    this.djSegment = [0.3, 0.7];
     this.showLabels = true;
     this.highlightedIds = [];
     this.resize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
@@ -24,6 +25,12 @@ export class OverlayRenderer {
   setLaneLabels(labels) {
     if (Array.isArray(labels) && labels.length > 0) {
       this.laneLabels = labels;
+    }
+  }
+
+  setDjSegment(seg) {
+    if (Array.isArray(seg) && seg.length === 2) {
+      this.djSegment = [Number(seg[0]), Number(seg[1])];
     }
   }
 
@@ -55,9 +62,9 @@ export class OverlayRenderer {
 
     const { ox, oy, size } = this.plateRect;
 
-    // 1. Faint pencil DJ line at bottom (y_phys = 0.03 -> screen bottom)
+    // 1. Faint pencil DJ line at bottom (y_phys = 0.03 -> screen bottom) + hot-zone segment [0.3, 0.7]
     ctx.save();
-    ctx.strokeStyle = "rgba(65, 55, 58, 0.24)";
+    ctx.strokeStyle = "rgba(65, 55, 58, 0.22)";
     ctx.lineWidth = 0.9;
     const djY = oy + (1.0 - 0.03) * size;
     ctx.beginPath();
@@ -65,11 +72,24 @@ export class OverlayRenderer {
     ctx.lineTo(ox + size, djY);
     ctx.stroke();
 
+    const segX0 = ox + this.djSegment[0] * size;
+    const segX1 = ox + this.djSegment[1] * size;
+    ctx.strokeStyle = "rgba(84, 48, 56, 0.50)";
+    ctx.lineWidth = 1.65;
+    ctx.beginPath();
+    ctx.moveTo(segX0, djY);
+    ctx.lineTo(segX1, djY);
+    ctx.moveTo(segX0, djY - 3);
+    ctx.lineTo(segX0, djY + 3);
+    ctx.moveTo(segX1, djY - 3);
+    ctx.lineTo(segX1, djY + 3);
+    ctx.stroke();
+
     ctx.font = '500 10px "IBM Plex Mono", monospace';
-    ctx.fillStyle = "rgba(55, 46, 50, 0.62)";
+    ctx.fillStyle = "rgba(55, 46, 50, 0.65)";
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    ctx.fillText("DJ", ox + size * 0.5, djY + 4);
+    ctx.fillText("DJ", (segX0 + segX1) * 0.5, djY + 4);
 
     // 2. Faint pencil origin line at top (y_phys = 0.955 -> screen top) + lane letters
     const originY = oy + (1.0 - 0.955) * size;
@@ -230,15 +250,15 @@ export class OverlayRenderer {
       ctx.restore();
     }
 
-    // 5. Chat-hover highlight rings (thin crisp ring around hovered agent(s))
+    // 5. Chat-hover highlight rings (thin crisp ring fitted to each agent's current radius)
     if (this.highlightedIds.length > 0) {
       ctx.save();
-      const ringR = AGENT_RADIUS * 1.22 * size;
       const pts = [];
       for (let i = 0; i < this.highlightedIds.length; i++) {
         const ag = byId.get(this.highlightedIds[i]);
         if (!ag) continue;
         const [sx, sy] = this._toScreen(ag.x, ag.y);
+        const ringR = (Number.isFinite(ag.r) && ag.r > 0.005 ? ag.r : AGENT_RADIUS) * 1.28 * size;
         pts.push([sx, sy]);
 
         // Soft paper halo + crisp thin dark ring

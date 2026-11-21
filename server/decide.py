@@ -22,16 +22,16 @@ from server.config import RING_CLIP_SECONDS
 from server.gemini_client import ApiResult, GeminiClient
 from server.negotiate import PendingAsk
 from server.sections import build_music_questions, format_features_text, parse_music_answers
-from server.state import Agent, CrowdState, ring_for_agent
+from server.state import Agent, CrowdState, energy_word, ring_for_agent
 from server.wordofmouth import WordOfMouth, nearest_neighbors_text
 
 logger = logging.getLogger("agent_crowd.decide")
 
 ACTION_CRITERIA: dict[str, str] = {
-    "push": "push forward toward the DJ for a front spot (best when keen is high, energy is high, and music is building or dropping)",
+    "push": "push forward toward the DJ for a front spot (best when keen is high, energy is fresh or ok, and music is building or dropping)",
     "hold": "hold your current spot on the floor without pushing forward or drifting back",
     "dance": "dance in place with room around you (best when space desire is high and crowding is low)",
-    "rest": "drift back to open space to recover energy (best when energy is low or music calms down)",
+    "rest": "drift back to open space to recover energy (best when tired or music drops into a calm breakdown)",
     "yield": "step aside so someone behind you can pass",
 }
 
@@ -74,7 +74,7 @@ def _agent_action_instructions(agent: Agent, ring: int, neighbors_str: str, wom_
     return (
         f"You are A{agent.id} on a dancefloor, ring {ring} of 5 from the DJ (1 = front).\n"
         f"Traits: keen {agent.k:.1f} (want front row), space {agent.s:.1f} (want room to dance). "
-        f"Now: energy {agent.E:.2f}, proximity {agent.v:.2f}, crowding {agent.rho:.2f}, happiness {agent.H:.2f}.\n"
+        f"Now: energy {energy_word(agent.E)}, proximity {agent.v:.2f}, crowding {agent.rho:.2f}, happiness {agent.H:.2f}.\n"
         f"Neighbors: {neighbors_str}.{wom_part}\n"
         f"Given what you hear in the music and your traits, what do you do now?"
     )
@@ -86,7 +86,7 @@ def _agent_push_instructions(agent: Agent, ring: int, neighbors_str: str, wom_st
     return (
         f"You are A{agent.id} on a dancefloor, ring {ring} of 5 from the DJ (1 = front).\n"
         f"Traits: keen {agent.k:.1f} (want front row), space {agent.s:.1f} (want room to dance). "
-        f"Now: energy {agent.E:.2f}, proximity {agent.v:.2f}, crowding {agent.rho:.2f}, happiness {agent.H:.2f}.\n"
+        f"Now: energy {energy_word(agent.E)}, proximity {agent.v:.2f}, crowding {agent.rho:.2f}, happiness {agent.H:.2f}.\n"
         f"Neighbors: {neighbors_str}.{wom_part}\n"
         f"Given what you hear and your keenness for the front, how forcefully do you push toward the DJ right now?"
     )
@@ -99,7 +99,7 @@ def _ask_answer_instructions(blocker: Agent, ask: PendingAsk, crowd: CrowdState)
     return (
         f"You are A{blocker.id} on a dancefloor, ring {r} of 5 from the DJ (1 = front). "
         f"Your traits: keen {blocker.k:.1f}, space {blocker.s:.1f}. "
-        f"Your state: energy {blocker.E:.2f}, proximity {blocker.v:.2f}, crowding {blocker.rho:.2f}, happiness {blocker.H:.2f}.\n"
+        f"Your state: energy {energy_word(blocker.E)}, proximity {blocker.v:.2f}, crowding {blocker.rho:.2f}, happiness {blocker.H:.2f}.\n"
         f"History: you yielded to A{ask.asker_id} {y_ba} times; A{ask.asker_id} yielded to you {y_ab} times.\n"
         f'A{ask.asker_id} behind you asks: "{ask.text}" (claims keenness {ask.claimed_keenness:.2f}).\n'
         f"Given what you hear in the music and your state, do you step aside and yield to A{ask.asker_id}?"

@@ -78,6 +78,8 @@ export class FakeCrowd {
       }
       const k = clamp01(baseK + (this.rng() * 0.2 - 0.1));
       const s = clamp01(baseS + (this.rng() * 0.2 - 0.1));
+      const archSize = arch === "diehard" ? 1.2 : arch === "dancer" ? 0.85 : 1.0;
+      const sizeMult = archSize * (0.9 + this.rng() * 0.2);
 
       const laneX = (lane + 0.5) / 10;
       const x = Math.max(0.04, Math.min(0.96, laneX + (this.rng() - 0.5) * 0.06));
@@ -89,6 +91,9 @@ export class FakeCrowd {
         archetype: arch,
         k,
         s,
+        sizeMult,
+        r: AGENT_RADIUS * sizeMult,
+        localMusic: 0.4,
         x,
         y,
         vx: 0,
@@ -279,8 +284,12 @@ export class FakeCrowd {
         }
       }
       a.rho = Math.min(8, closeCnt) / 8;
-      const distDj = Math.hypot(a.x - djX, a.y - djY);
-      a.v = Math.max(0, Math.min(1, 1 - distDj / 1.118));
+      const segX = Math.max(0.3, Math.min(0.7, a.x));
+      const distDj = Math.hypot(a.x - segX, a.y - djY);
+      a.v = Math.max(0, Math.min(1, 1 - distDj / 1.04403));
+      const ringGain = distDj < 0.2 ? 1.0 : distDj < 0.4 ? 0.9 : distDj < 0.6 ? 0.75 : distDj < 0.8 ? 0.6 : 0.45;
+      a.localMusic = musicEnergy * ringGain;
+      a.r = AGENT_RADIUS * a.sizeMult * (0.8 + 0.45 * a.v) * (0.85 + 0.15 * a.E);
 
       const isPush = a.action === "push" ? 1 : 0;
       const isDance = a.action === "dance" ? 1 : 0;
@@ -332,6 +341,9 @@ export class FakeCrowd {
         +a.H.toFixed(3),
         a.action,
         +a.pressure.toFixed(4),
+        +a.r.toFixed(4),
+        +a.v.toFixed(4),
+        +a.localMusic.toFixed(4),
       ]),
     };
   }

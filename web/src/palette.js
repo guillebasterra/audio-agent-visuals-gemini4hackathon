@@ -120,20 +120,25 @@ export class CrowdColorMapper {
   }
 
   mapH(H) {
-    const h = Math.max(0, Math.min(1, Number.isFinite(H) ? H : 0.3));
-    const span = Math.max(this.smoothHi - this.smoothLo, 0.045);
+    const h = Math.max(0, Math.min(1, Number.isFinite(H) ? H : 0.35));
+    const span = Math.max(this.smoothHi - this.smoothLo, 0.08);
     const rel = Math.max(0, Math.min(1, (h - this.smoothLo) / span));
-    // Absolute anchor: ~0.03 -> cool floor, ~0.39+ -> full red-orange euphoria
-    const abs = Math.max(0, Math.min(1, (h - 0.03) / 0.36));
+    // Absolute anchor calibrated for Phase E2 H span (~0.08 cool floor .. ~0.76+ blazing red-orange)
+    const abs = Math.max(0, Math.min(1, (h - 0.08) / 0.68));
     // Hybrid blend: stretches relative spread while preserving global warm vs. cool mood
-    const blended = 0.56 * rel + 0.44 * abs;
+    const blended = 0.48 * rel + 0.52 * abs;
     // Gentle S-curve contrast around midpoint for clearer TLC pigment separation
     const sCurve = blended * blended * (3.0 - 2.0 * blended);
     return Math.max(0, Math.min(1, 0.65 * blended + 0.35 * sCurve));
   }
 
-  absorbanceForAgent(H, agentId) {
-    return happinessToAbsorbance(this.mapH(H), agentId);
+  absorbanceForAgent(H, agentId, vibrancy = 1.0) {
+    const [r, g, b] = happinessToSrgb(this.mapH(H), agentId, vibrancy);
+    return [
+      -Math.log(Math.max(r, 0.04)),
+      -Math.log(Math.max(g, 0.04)),
+      -Math.log(Math.max(b, 0.04)),
+    ];
   }
 
   /**
@@ -153,10 +158,11 @@ export class CrowdColorMapper {
 
 /**
  * Map normalized happiness t in [0, 1] to sRGB [r, g, b] in [0, 1] via OKLab interpolation,
- * with optional deterministic per-agent hue jitter (+-8 deg).
+ * with optional deterministic per-agent hue jitter (+-8 deg) and proximity vibrancy (0=pale back, 1=vivid front).
  */
-export function happinessToSrgb(H, agentId = null) {
+export function happinessToSrgb(H, agentId = null, vibrancy = 1.0) {
   const h = Math.max(0, Math.min(1, Number.isFinite(H) ? H : 0.5));
+  const vib = Math.max(0, Math.min(1, Number.isFinite(vibrancy) ? vibrancy : 1.0));
   let i = 0;
   while (i < STOPS_OKLAB.length - 2 && h > STOPS_OKLAB[i + 1].h) {
     i++;
@@ -165,7 +171,7 @@ export function happinessToSrgb(H, agentId = null) {
   const s1 = STOPS_OKLAB[i + 1];
   const t = s1.h > s0.h ? (h - s0.h) / (s1.h - s0.h) : 0;
 
-  const L = s0.lab[0] + (s1.lab[0] - s0.lab[0]) * t;
+  let L = s0.lab[0] + (s1.lab[0] - s0.lab[0]) * t;
   let a = s0.lab[1] + (s1.lab[1] - s0.lab[1]) * t;
   let b = s0.lab[2] + (s1.lab[2] - s0.lab[2]) * t;
 
@@ -178,6 +184,12 @@ export function happinessToSrgb(H, agentId = null) {
     a = aRot;
     b = bRot;
   }
+
+  // Vibrancy gradient: front (vib=1) is fully saturated; back (vib=0) desaturates & lightens toward paper
+  const chromaScale = 0.34 + 0.66 * vib;
+  a *= chromaScale;
+  b *= chromaScale;
+  L = L + (0.87 - L) * (0.42 * (1.0 - vib));
 
   const [lr, lg, lb] = oklabToLinearRgb(L, a, b);
   return [linearToSrgb(lr), linearToSrgb(lg), linearToSrgb(lb)];

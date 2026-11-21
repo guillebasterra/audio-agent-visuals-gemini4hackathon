@@ -8,8 +8,9 @@ import splatFrag from "./shaders/splat.frag.glsl?raw";
 import compositeFrag from "./shaders/composite.frag.glsl?raw";
 import { CrowdColorMapper } from "./palette.js";
 
-export const AGENT_RADIUS = 0.036;
+export const AGENT_RADIUS = 0.030;
 const MAX_AGENTS = 128;
+const AGENT_TEX_ROWS = 3;
 
 /**
  * Shared square plate transform in CSS pixels so WebGL2 and Canvas2D overlay align pixel-perfectly.
@@ -144,15 +145,32 @@ export class PlateRenderer {
 
     gl.bindVertexArray(null);
 
-    // 128 x 2 RGBA32F agent data texture (core WebGL2, NEAREST filtering)
-    this.agentTexData = new Float32Array(MAX_AGENTS * 2 * 4);
+    // 128 x 3 RGBA32F agent data texture (core WebGL2, NEAREST filtering)
+    // row 0: (x, y, rPulse, density)
+    // row 1: (absR, absG, absB, djSquish)
+    // row 2: (vx, vy, wobble2, wobble3)
+    this.agentTexData = new Float32Array(MAX_AGENTS * AGENT_TEX_ROWS * 4);
     this.agentTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, this.agentTex);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, MAX_AGENTS, 2, 0, gl.RGBA, gl.FLOAT, this.agentTexData);
+    gl.texImage2D(
+      gl.TEXTURE_2D,
+      0,
+      gl.RGBA32F,
+      MAX_AGENTS,
+      AGENT_TEX_ROWS,
+      0,
+      gl.RGBA,
+      gl.FLOAT,
+      this.agentTexData
+    );
+
+    // Per-agent visual spring-damper wobble & DJ-squish state keyed by agent id
+    this._blobState = new Map();
+    this._prevKickEnv = 0;
 
     // Ping-pong trail FBOs (created in resize)
     this.trails = [null, null];
@@ -253,10 +271,16 @@ export class PlateRenderer {
     // Update smoothed crowd H spread for full-range TLC hue contrast
     this.colorMapper.updateSpread(agents, dtSec);
 
+    // Detect kick onset for wobble spring impulse
+    const kickDelta = Math.max(0, kickEnvelope - this._prevKickEnv);
+    this._prevKickEnv = kickEnvelope;
+    const dt = Math.min(0.04, Math.max(0.002, dtSec));
+
     // Pack agent buffers (DJ at bottom: physics y=0 maps directly to GL y=0; origin y=1 maps to top).
     const inst = this.instanceData;
     const tex = this.agentTexData;
     const row1Offset = MAX_AGENTS * 4;
+    const row2Offset = MAX_AGENTS * 8;
 
     for (let i = 0; i < count; i++) {
       const a = agents[i];
@@ -266,12 +290,66 @@ export class PlateRenderer {
       const vyGl = a.vy;
       const E = Math.max(0, Math.min(1, a.E));
       const pressure = Math.max(0, a.pressure || 0);
-      // Soft-body visual radius (1.26x physics radius + slight compression bulge) so packed
-      // bodies flatten noticeably into rounded polygons while free agents round out.
+
+      // Proximity to wider DJ segment [0.3, 0.7] if not already supplied by backend
+      let vProx = a.v;
+      if (!Number.isFinite(vProx)) {
+        const cx = Math.max(0.3, Math.min(0.7, xGl));
+        const dSeg = Math.hypot(xGl - cx, yGl);
+        vProx = Math.max(0, Math.min(1, 1.0 - dSeg / 1.04403));
+      }
+      // Ring-attenuated local_music if not supplied by backend
+      let localMusic = a.localMusic;
+      if (!Number.isFinite(localMusic)) {
+        const ringGain = 0.45 + 0.55 * vProx;
+        localMusic = musicEnergy * ringGain;
+      }
+
+      // Per-agent radius synced with physics collisions, plus compression bulge and kick pulse
+      const physR = Number.isFinite(a.r) && a.r > 0.005 ? a.r : AGENT_RADIUS * (0.8 + 0.45 * vProx) * (0.85 + 0.15 * E);
       const bulge = 1.0 + 0.10 * Math.min(1.0, pressure * 12.0);
-      const rBase = AGENT_RADIUS * 1.26 * bulge;
-      const rPulse = rBase * (1.0 + 0.15 * musicEnergy * E + 0.25 * kickEnvelope * E);
-      const [ar, ag, ab] = this.colorMapper.absorbanceForAgent(a.H, a.id);
+      const rBase = physR * 1.24 * bulge;
+      const pulseScale = 1.0 + 0.14 * localMusic * E + 0.30 * kickEnvelope * localMusic * E;
+      const rPulse = rBase * pulseScale;
+
+      // Update per-agent 2-mode spring-damper wobble + DJ-line squish spring
+      let bs = this._blobState.get(a.id);
+      if (!bs) {
+        bs = { w2: 0, v2: 0, w3: 0, v3: 0, djSquish: 0, djVel: 0, prevP: pressure, prevVx: vxGl, prevVy: vyGl };
+        this._blobState.set(a.id, bs);
+      }
+      const pImpulse = Math.max(0, pressure - bs.prevP) * 28.0;
+      const dvImpulse = Math.hypot(vxGl - bs.prevVx, vyGl - bs.prevVy) * 4.5;
+      const kImpulse = kickDelta * localMusic * E * 3.8;
+      const totalImp = Math.min(2.2, pImpulse + dvImpulse + kImpulse);
+      bs.prevP = pressure;
+      bs.prevVx = vxGl;
+      bs.prevVy = vyGl;
+
+      // Mode 2 (quadrupole jelly oval): w=18 rad/s, zeta=0.26
+      const w2Freq = 18.0;
+      const a2 = -w2Freq * w2Freq * bs.w2 - 2.0 * 0.26 * w2Freq * bs.v2;
+      bs.v2 += a2 * dt + totalImp * 1.15;
+      bs.w2 = Math.max(-0.18, Math.min(0.18, bs.w2 + bs.v2 * dt));
+
+      // Mode 3 (organic trefoil wobble): w=25 rad/s, zeta=0.30
+      const w3Freq = 25.0;
+      const a3 = -w3Freq * w3Freq * bs.w3 - 2.0 * 0.30 * w3Freq * bs.v3;
+      bs.v3 += a3 * dt + totalImp * 0.72 * ((a.id % 2 === 0) ? 1 : -1);
+      bs.w3 = Math.max(-0.13, Math.min(0.13, bs.w3 + bs.v3 * dt));
+
+      // DJ-line squish spring: flattens when pressed against y=0.03, springs back round when moving away
+      const djDist = yGl - 0.03;
+      const targetSquish = Math.max(0, Math.min(1, (rPulse * 1.18 - djDist) / Math.max(rPulse * 0.65, 0.01)));
+      const djFreq = 14.0;
+      const djAcc = djFreq * djFreq * (targetSquish - bs.djSquish) - 2.0 * 0.52 * djFreq * bs.djVel;
+      bs.djVel += djAcc * dt;
+      bs.djSquish = Math.max(0, Math.min(1.15, bs.djSquish + bs.djVel * dt));
+
+      // Proximity vibrancy: near DJ = vivid & saturated; back = paler, fading toward paper
+      const vibrancy = 0.22 + 0.78 * Math.pow(vProx, 0.85);
+      const density = (0.28 + 1.28 * E) * (0.34 + 0.66 * vibrancy);
+      const [ar, ag, ab] = this.colorMapper.absorbanceForAgent(a.H, a.id, vibrancy);
 
       const io = i * this.instanceFloats;
       inst[io] = xGl;
@@ -281,7 +359,7 @@ export class PlateRenderer {
       inst[io + 4] = rPulse;
       inst[io + 5] = E;
       inst[io + 6] = pressure;
-      inst[io + 7] = 0;
+      inst[io + 7] = vibrancy;
       inst[io + 8] = ar;
       inst[io + 9] = ag;
       inst[io + 10] = ab;
@@ -290,20 +368,26 @@ export class PlateRenderer {
       tex[r0] = xGl;
       tex[r0 + 1] = yGl;
       tex[r0 + 2] = rPulse;
-      tex[r0 + 3] = E;
+      tex[r0 + 3] = density;
 
       const r1 = row1Offset + i * 4;
       tex[r1] = ar;
       tex[r1 + 1] = ag;
       tex[r1 + 2] = ab;
-      tex[r1 + 3] = pressure;
+      tex[r1 + 3] = bs.djSquish;
+
+      const r2 = row2Offset + i * 4;
+      tex[r2] = vxGl;
+      tex[r2 + 1] = vyGl;
+      tex[r2 + 2] = bs.w2;
+      tex[r2 + 3] = bs.w3;
     }
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.instanceBuf);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, inst.subarray(0, count * this.instanceFloats));
 
     gl.bindTexture(gl.TEXTURE_2D, this.agentTex);
-    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, MAX_AGENTS, 2, gl.RGBA, gl.FLOAT, tex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, MAX_AGENTS, AGENT_TEX_ROWS, gl.RGBA, gl.FLOAT, tex);
 
     // Plate rect in GL framebuffer pixels (bottom-left origin)
     const { ox, oy, size } = this.plateRectCss;

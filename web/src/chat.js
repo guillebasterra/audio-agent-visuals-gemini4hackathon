@@ -326,6 +326,16 @@ export class ChatFeed {
     const line = document.createElement("div");
     line.className = "chat-line kind-notable";
 
+    if (ev.kind === "exhausted_summary") {
+      const ids = Array.isArray(ev.agents) ? ev.agents : [];
+      const body = document.createElement("span");
+      body.textContent = String(ev.text || `${ids.length} agents retreating`);
+      body.style.color = "rgba(92, 66, 82, 0.85)";
+      line.appendChild(body);
+      this._appendLine(line, ids);
+      return;
+    }
+
     const id = ev.agent;
     const prefix = `A${id}`;
     const rawText = String(ev.text || "");
@@ -336,7 +346,7 @@ export class ChatFeed {
     body.textContent = rest;
     line.appendChild(body);
 
-    this._appendLine(line, [id]);
+    this._appendLine(line, Number.isFinite(id) ? [id] : []);
   }
 
   _emitHouse(house) {
@@ -439,13 +449,29 @@ export class ChatFeed {
       emittedCombinedAsks += 1;
     }
 
-    // Priority 2: exhaustion and give-up notable decisions
+    // Priority 2: exhaustion (collapsed into one summary if multiple) and give-up notable decisions
     const notable = Array.isArray(msg.notable) ? msg.notable : [];
-    const highNotable = notable.filter(
-      (ev) => ev.kind === "exhausted" || ev.kind === "give_up"
-    );
+    const exhRaw = notable.filter((ev) => ev.kind === "exhausted" || ev.kind === "exhausted_summary");
+    const highNotable = [];
+    if (exhRaw.length === 1) {
+      highNotable.push(exhRaw[0]);
+    } else if (exhRaw.length > 1) {
+      const mergedIds = [];
+      for (const ev of exhRaw) {
+        if (Array.isArray(ev.agents)) mergedIds.push(...ev.agents);
+        else if (Number.isFinite(ev.agent)) mergedIds.push(ev.agent);
+      }
+      highNotable.push({
+        kind: "exhausted_summary",
+        agents: mergedIds,
+        text: `${mergedIds.length} agents retreating`,
+      });
+    }
+    for (const ev of notable) {
+      if (ev.kind === "give_up") highNotable.push(ev);
+    }
     const lowNotable = notable.filter(
-      (ev) => ev.kind !== "exhausted" && ev.kind !== "give_up"
+      (ev) => ev.kind !== "exhausted" && ev.kind !== "exhausted_summary" && ev.kind !== "give_up"
     );
 
     for (const ev of highNotable) {
