@@ -1,10 +1,11 @@
 """FastAPI server entry point.
 
-Phase B:
-- GET /health
-- WS /ws/echo: raw JSON + binary echo (for Phase 0 compatibility / diagnostics)
+Phase C:
+- GET /health, GET /api/status, GET /api/tracks, GET /tracks/{filename}
+- WS /ws/echo: raw JSON + binary echo (Phase 0 diagnostic)
 - WS /ws: Section 9 live contract — sends `init` on connect, streams 30 Hz `physics`
-  frames, handles `clock` and `control` JSON messages, and accepts binary PCM frames.
+  frames, handles `clock` and `control` JSON messages (pause, seek, reset, condition),
+  and buffers + records incoming 16 kHz Int16 mono PCM into `runs/<run>/session.wav`.
 """
 
 from __future__ import annotations
@@ -16,10 +17,12 @@ import logging
 import time
 from typing import Any
 
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
-from server.config import PHYSICS_HZ
+from server.audio import RollingAudioRecorder
+from server.config import PHYSICS_HZ, TRACKS_DIR
 from server.physics import PhysicsEngine
 from server.shove import apply_shove_actions
 from server.state import VALID_CONDITIONS, CrowdState, init_crowd
@@ -27,15 +30,16 @@ from server.state import VALID_CONDITIONS, CrowdState, init_crowd
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("agent_crowd.server")
 
-SHOVE_REFRESH_SECONDS: float = 1.0
+SHOVE_REFRESH_SECONDS: float = 0.5
 
 
 class SimulationRuntime:
-    """Owns the live CrowdState, PhysicsEngine, WebSocket clients, and 30 Hz broadcast task."""
+    """Owns CrowdState, PhysicsEngine, RollingAudioRecorder, WebSocket clients, and 30 Hz loop."""
 
     def __init__(self, seed: int = 42, condition: str = "shove") -> None:
         self.crowd: CrowdState = init_crowd(seed=seed, condition=condition)
         self.physics: PhysicsEngine = PhysicsEngine()
+        self.audio: RollingAudioRecorder = RollingAudioRecorder()
         self.clients: dict[WebSocket, asyncio.Lock] = {}
         self.pcm_bytes_received: int = 0
         self._physics_task: asyncio.Task[None] | None = None
@@ -49,7 +53,7 @@ class SimulationRuntime:
             self._physics_task = asyncio.create_task(self._physics_loop(), name="physics_loop")
 
     async def stop(self) -> None:
-        """Cancel and await the background physics loop cleanly."""
+        """Cancel background physics loop and close session WAV cleanly."""
         task = self._physics_task
         self._physics_task = None
         if task is not None and not task.done():
@@ -58,6 +62,7 @@ class SimulationRuntime:
                 await task
             except asyncio.CancelledError:
                 pass
+        self.audio.close()
         self.clients.clear()
 
     def mark_shove_dirty(self) -> None:
@@ -86,17 +91,29 @@ class SimulationRuntime:
             self.clients.pop(ws, None)
 
     async def reset_crowd(self, seed: int | None = None, condition: str | None = None) -> None:
-        """Re-initialize crowd state and physics engine, then broadcast fresh `init`."""
+        """Re-initialize crowd state, physics engine, and audio recorder; broadcast fresh `init`."""
         next_seed = self.crowd.seed if seed is None else int(seed)
         next_cond = self.crowd.condition if condition is None else str(condition)
         if next_cond not in VALID_CONDITIONS:
             next_cond = self.crowd.condition
         self.crowd = init_crowd(seed=next_seed, condition=next_cond)
         self.physics.reset()
+        self.audio.close()
+        self.audio.clear_buffer()
+        self.pcm_bytes_received = 0
         self._shove_timer = SHOVE_REFRESH_SECONDS
         self._shove_dirty = True
         self._prev_loud = False
         await self.broadcast_json(self.crowd.init_payload())
+
+    def handle_pcm_chunk(self, raw_bytes: bytes) -> None:
+        """Buffer and record a raw 16 kHz Int16 mono PCM chunk from the browser."""
+        self.pcm_bytes_received += len(raw_bytes)
+        self.audio.append_pcm_bytes(
+            raw_bytes,
+            condition=self.crowd.condition,
+            seed=self.crowd.seed,
+        )
 
     async def handle_client_json(self, msg: dict[str, Any]) -> None:
         """Process a Section 9 client -> server JSON message (`clock` or `control`)."""
@@ -136,6 +153,8 @@ class SimulationRuntime:
             elif action == "pause":
                 self.crowd.playing = False
             elif action == "seek":
+                # Section 6: on seek, clear the rolling audio buffer
+                self.audio.clear_buffer()
                 if "t" in msg and msg["t"] is not None:
                     self.crowd.t = float(msg["t"])
             elif action == "reset":
@@ -143,6 +162,49 @@ class SimulationRuntime:
             return
 
         logger.debug("Ignoring unrecognized WS message type: %r", msg_type)
+
+    def status_snapshot(self) -> dict[str, Any]:
+        agents = self.crowd.agents
+        n = max(1, len(agents))
+        by_arch: dict[str, dict[str, float]] = {}
+        for arch in ("diehard", "dancer", "between"):
+            group = [a for a in agents if a.archetype == arch]
+            if group:
+                by_arch[arch] = {
+                    "count": len(group),
+                    "mean_v": round(sum(a.v for a in group) / len(group), 4),
+                    "mean_y": round(sum(a.y for a in group) / len(group), 4),
+                    "mean_rho": round(sum(a.rho for a in group) / len(group), 4),
+                    "mean_E": round(sum(a.E for a in group) / len(group), 4),
+                    "mean_H": round(sum(a.H for a in group) / len(group), 4),
+                    "mean_speed": round(
+                        sum((a.vx * a.vx + a.vy * a.vy) ** 0.5 for a in group) / len(group), 4
+                    ),
+                }
+        return {
+            "t": round(self.crowd.t, 3),
+            "playing": self.crowd.playing,
+            "condition": self.crowd.condition,
+            "seed": self.crowd.seed,
+            "w": round(self.crowd.w, 3),
+            "music_energy": round(self.crowd.music_energy, 3),
+            "energy_5s": round(self.crowd.energy_5s, 3),
+            "buffered_seconds": round(self.audio.buffered_seconds(), 3),
+            "recorded_samples": self.audio.recorded_samples,
+            "chunks_received": self.audio.chunks_received,
+            "pcm_bytes_received": self.pcm_bytes_received,
+            "session_wav": str(self.audio.session_wav_path) if self.audio.session_wav_path else None,
+            "mean_v": round(sum(a.v for a in agents) / n, 4),
+            "mean_E": round(sum(a.E for a in agents) / n, 4),
+            "mean_rho": round(sum(a.rho for a in agents) / n, 4),
+            "mean_H": round(sum(a.H for a in agents) / n, 4),
+            "max_H": round(max((a.H for a in agents), default=0.0), 4),
+            "top20_diehard": sum(1 for a in sorted(agents, key=lambda ag: ag.y)[:20] if a.archetype == "diehard"),
+            "exhausted_count": sum(1 for a in agents if a.exhausted),
+            "resting_or_retreating": sum(1 for a in agents if a.action in ("rest", "retreat")),
+            "pushing_count": sum(1 for a in agents if a.action == "push"),
+            "by_archetype": by_arch,
+        }
 
     async def _physics_loop(self) -> None:
         dt = 1.0 / float(PHYSICS_HZ)
@@ -207,6 +269,31 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/status")
+async def api_status() -> dict[str, Any]:
+    return runtime.status_snapshot()
+
+
+@app.get("/api/tracks")
+async def api_tracks() -> dict[str, list[str]]:
+    if not TRACKS_DIR.exists():
+        return {"tracks": []}
+    files = sorted(
+        p.name for p in TRACKS_DIR.iterdir() if p.is_file() and p.suffix.lower() in {".mp3", ".wav", ".m4a", ".ogg"}
+    )
+    return {"tracks": files}
+
+
+@app.get("/tracks/{filename}")
+async def serve_track(filename: str) -> FileResponse:
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    path = TRACKS_DIR / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Track not found")
+    return FileResponse(path)
+
+
 @app.websocket("/ws/echo")
 async def websocket_echo(ws: WebSocket) -> None:
     """Raw JSON + binary WebSocket echo endpoint (Phase 0 diagnostic)."""
@@ -263,8 +350,7 @@ async def websocket_endpoint(
                 if isinstance(payload, dict):
                     await runtime.handle_client_json(payload)
             elif message.get("bytes") is not None:
-                # Phase C will push these 16 kHz Int16 mono PCM chunks into audio.py
-                runtime.pcm_bytes_received += len(message["bytes"])
+                runtime.handle_pcm_chunk(message["bytes"])
     except WebSocketDisconnect:
         pass
     finally:

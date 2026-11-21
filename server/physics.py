@@ -20,6 +20,8 @@ from server.config import (
     ENERGY_D,
     EXHAUST_RECOVER_E,
     HAPPINESS_TAU,
+    MASS_BASE,
+    MASS_PUSH_SCALE,
     MAX_DIST_TO_DJ,
     MAX_SPEED,
     PHYSICS_HZ,
@@ -283,14 +285,14 @@ class PhysicsEngine:
 
         # 3. Collide: 4 iterations, brute-force all pairs, inverse-mass split, wall clamp
         pressure = np.zeros(n, dtype=np.float64)
-        mass = 0.2 + pushiness * E
+        mass = MASS_BASE + MASS_PUSH_SCALE * (pushiness * pushiness) * E
         inv_mass = 1.0 / mass
         min_dist = 2.0 * AGENT_RADIUS
         min_dist_sq = min_dist * min_dist
         triu_mask = self._get_triu_mask(n)
         relax = self.collision_relax
 
-        for _ in range(COLLISION_ITERATIONS):
+        for iter_idx in range(COLLISION_ITERATIONS):
             dx = pos[:, 0:1] - pos[None, :, 0]
             dy = pos[:, 1:2] - pos[None, :, 1]
             dist_sq = dx * dx + dy * dy
@@ -327,6 +329,39 @@ class PhysicsEngine:
                 np.add.at(pos[:, 1], ii, move_i * ny)
                 np.add.at(pos[:, 0], jj, -move_j * nx)
                 np.add.at(pos[:, 1], jj, -move_j * ny)
+
+                # Shoulder-slip & jostle on first iteration only so remaining iterations
+                # resolve all overlaps cleanly (< 0.001) while heavy pushers still slip past.
+                if iter_idx == 0:
+                    push_pair = np.maximum(is_push[ii], is_push[jj])
+                    if np.any(push_pair > 0.0):
+                        tx = -ny
+                        ty = nx
+                        jostle_sign = np.sin(crowd.t * 3.1 + ii * 1.7 - jj * 2.3)
+                        side = np.where(
+                            np.abs(pdx) > 1e-4,
+                            np.sign(pdx),
+                            np.where(jostle_sign >= 0.0, 1.0, -1.0),
+                        )
+                        mass_diff = np.abs(mass[ii] - mass[jj]) / (mass[ii] + mass[jj])
+                        slip = sep * push_pair * (0.72 * mass_diff * side + 0.38 * jostle_sign)
+                        np.add.at(pos[:, 0], ii, slip * tx * (im_i / inv_sum))
+                        np.add.at(pos[:, 1], ii, slip * ty * (im_i / inv_sum))
+                        np.add.at(pos[:, 0], jj, -slip * tx * (im_j / inv_sum))
+                        np.add.at(pos[:, 1], jj, -slip * ty * (im_j / inv_sum))
+
+                        i_hb = (mass[ii] > mass[jj] * 1.35) & (is_push[ii] > 0.5) & (pos[ii, 1] > pos[jj, 1])
+                        j_hb = (mass[jj] > mass[ii] * 1.35) & (is_push[jj] > 0.5) & (pos[jj, 1] > pos[ii, 1])
+                        if np.any(i_hb):
+                            k_idx = np.nonzero(i_hb)[0]
+                            s_y = sep[k_idx] * 0.45 * mass_diff[k_idx]
+                            np.add.at(pos[:, 1], ii[k_idx], -s_y)
+                            np.add.at(pos[:, 1], jj[k_idx], +s_y)
+                        if np.any(j_hb):
+                            k_idx = np.nonzero(j_hb)[0]
+                            s_y = sep[k_idx] * 0.45 * mass_diff[k_idx]
+                            np.add.at(pos[:, 1], jj[k_idx], -s_y)
+                            np.add.at(pos[:, 1], ii[k_idx], +s_y)
 
                 np.add.at(pressure, ii, overlap)
                 np.add.at(pressure, jj, overlap)

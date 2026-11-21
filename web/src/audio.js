@@ -337,11 +337,19 @@ export class AudioEngine {
     }
     const rawRms = Math.sqrt(sq / this.timeData.length);
 
-    // Normalize each band by a decaying running max (~10 s decay)
-    const decay = Math.exp(-dt / 10.0);
+    // Track a mildly smoothed band envelope for normalization so single 42 ms kick
+    // transients don't crush a loud drop down to ~0.40, while slow decay (~180 s)
+    // keeps 30-60 s quiet breakdowns authentically quiet (~0.20-0.30).
+    const smoothAlpha = 1.0 - Math.exp(-dt / 0.25);
+    if (!this.smoothBands) {
+      this.smoothBands = { sub: rawSub, bass: rawBass, mid: rawMid, high: rawHigh, rms: rawRms };
+    }
+    const decay = Math.exp(-dt / 180.0);
     const norm = (val, key, floor) => {
-      this.maxBands[key] = Math.max(val, this.maxBands[key] * decay, floor);
-      return Math.min(1, val / this.maxBands[key]);
+      this.smoothBands[key] += smoothAlpha * (val - this.smoothBands[key]);
+      const refVal = this.smoothBands[key];
+      this.maxBands[key] = Math.max(refVal, this.maxBands[key] * decay, floor);
+      return Math.min(1, refVal / this.maxBands[key]);
     };
 
     const sub = norm(rawSub, "sub", 0.0008);

@@ -1,9 +1,10 @@
-// Agent Crowd frontend entry point (Phase A: TLC WebGL2 renderer + AudioWorklet + ?fake=1).
+// Agent Crowd frontend entry point (Phase C: live WebSocket wiring + ?fake=1 fallback).
 
 import { PlateRenderer } from "./plate.js";
 import { OverlayRenderer } from "./overlay.js";
 import { AudioEngine } from "./audio.js";
 import { FakeCrowd } from "./fake.js";
+import { CrowdSocket } from "./ws.js";
 import { CrowdUI } from "./ui.js";
 
 const params = new URLSearchParams(window.location.search);
@@ -22,9 +23,10 @@ let prevFrameMs = 0;
 let currFrameMs = 0;
 let interpAgents = [];
 
-let condition = "talk";
+let condition = isFakeMode ? "talk" : "shove";
 let asksById = new Map();
 let asksLastTick = 0;
+let agentMetaById = new Map();
 
 function unpackPhysicsAgents(rawAgents) {
   const out = new Array(rawAgents.length);
@@ -50,6 +52,14 @@ function handleInit(msg) {
   if (msg.lane_labels) {
     overlay.setLaneLabels(msg.lane_labels);
   }
+  agentMetaById = new Map();
+  for (const a of msg.agents || []) {
+    agentMetaById.set(a.id, a);
+  }
+  prevFrame = null;
+  currFrame = null;
+  asksById.clear();
+  plate.clearTrails();
 }
 
 function handlePhysics(msg) {
@@ -84,7 +94,6 @@ function handleDecision(msg) {
       existing.updatedAt = now;
     }
   }
-  // Prune old asks after fadeout
   for (const [id, ask] of asksById.entries()) {
     if (now - ask.updatedAt > 5000) {
       asksById.delete(id);
@@ -97,9 +106,7 @@ function getInterpolatedAgents(nowMs) {
   if (!prevFrame || prevFrame.length !== currFrame.length) return currFrame;
 
   const span = Math.max(16, Math.min(100, currFrameMs - prevFrameMs));
-  const alpha = Math.max(0, Math.min(1, (nowMs - currFrameMs) / span + 1.0));
-  // Smoothly interpolate from prevFrame -> currFrame over one physics interval (~33.3 ms)
-  const t = Math.max(0, Math.min(1, (nowMs - currFrameMs) / 33.333));
+  const t = Math.max(0, Math.min(1, (nowMs - currFrameMs) / Math.max(33.333, span * 0.5)));
 
   if (interpAgents.length !== currFrame.length) {
     interpAgents = new Array(currFrame.length);
@@ -123,11 +130,11 @@ function getInterpolatedAgents(nowMs) {
     dst.action = a1.action;
     dst.pressure = a0.pressure + (a1.pressure - a0.pressure) * t;
   }
-  void alpha;
   return interpAgents;
 }
 
 let fakeCrowd = null;
+let socket = null;
 
 // Audio engine (file playback + shared AnalyserNode + 16 kHz mono Int16 AudioWorklet)
 const audio = new AudioEngine({
@@ -136,13 +143,21 @@ const audio = new AudioEngine({
     if (fakeCrowd && clockMsg.playing) {
       fakeCrowd.setMusicEnergy(clockMsg.dsp.energy);
     }
+    if (socket) {
+      socket.sendJson(clockMsg);
+    }
   },
-  onPcmChunk: (_pcmBuffer) => {
-    // Phase C forwards this 8,000-byte binary chunk over WebSocket.
+  onPcmChunk: (pcmBuffer) => {
+    if (socket) {
+      socket.sendPcm(pcmBuffer);
+    }
   },
   onControl: (ctrl) => {
     if (ctrl.action === "seek") {
       plate.clearTrails();
+    }
+    if (socket) {
+      socket.sendJson(ctrl);
     }
   },
 });
@@ -167,6 +182,9 @@ const ui = new CrowdUI({
   onCondition: (cond) => {
     condition = cond;
     if (fakeCrowd) fakeCrowd.setCondition(cond);
+    if (socket) {
+      socket.sendJson({ type: "control", condition: cond });
+    }
   },
   onToggleLabels: () => {
     overlay.showLabels = !overlay.showLabels;
@@ -186,6 +204,25 @@ if (isFakeMode) {
     onDecision: handleDecision,
   });
   fakeCrowd.start();
+} else {
+  socket = new CrowdSocket({
+    onInit: handleInit,
+    onPhysics: handlePhysics,
+    onDecision: handleDecision,
+    onStatus: (isUp) => {
+      if (isUp) {
+        socket.sendJson({ type: "control", condition });
+        if (audio.currentLabel) {
+          socket.sendJson({
+            type: "control",
+            source: audio.currentSourceMode,
+            label: audio.currentLabel,
+          });
+        }
+      }
+    },
+  });
+  socket.connect();
 }
 
 function handleResize() {
@@ -211,7 +248,6 @@ function frame(nowMs) {
   const dsp = audio.update(nowMs);
   const agents = getInterpolatedAgents(nowMs);
 
-  // In ?fake=1 before user hits Space, optional gentle synthetic pulse if ?beat=1; otherwise real DSP
   let musicEnergy = dsp.energy;
   let kickEnv = audio.kickEnvelope;
   if (isFakeMode && !audio.playing && params.get("beat") === "1") {
@@ -255,12 +291,13 @@ function frame(nowMs) {
 
 requestAnimationFrame(frame);
 
-// Diagnostic hook for headless visual & AudioWorklet verification
+// Diagnostic hook for headless visual & live A+B verification
 window.__agentCrowd = {
   isFakeMode,
   plate,
   overlay,
   audio,
+  socket,
   ui,
   ensureDefaultTrackLoaded,
   getMetrics: () => ({
@@ -268,6 +305,11 @@ window.__agentCrowd = {
     framesRendered,
     agentCount: currFrame ? currFrame.length : 0,
     useFloatTrails: plate.useFloatTrails,
+    wsConnected: socket ? socket.connected : false,
+    physicsFramesReceived: socket ? socket.physicsFramesReceived : 0,
+    clockSent: socket ? socket.clockSent : 0,
+    pcmChunksSent: socket ? socket.pcmChunksSent : 0,
+    pcmBytesSent: socket ? socket.pcmBytesSent : 0,
     playing: audio.playing,
     workletReady: audio.workletReady,
     pcmChunksTotal: audio.pcmChunksTotal,
