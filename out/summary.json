@@ -1,0 +1,875 @@
+{
+  "reference_house_condition": "talk",
+  "track": "getuphereletsdance.mp3",
+  "seed": 42,
+  "house_drop_onsets": [
+    {
+      "tick_idx": 20,
+      "tick": 21,
+      "t": 63.1,
+      "p_drop": 0.312,
+      "w": 1.703
+    },
+    {
+      "tick_idx": 60,
+      "tick": 61,
+      "t": 183.1,
+      "p_drop": 0.318,
+      "w": 1.665
+    },
+    {
+      "tick_idx": 85,
+      "tick": 86,
+      "t": 258.1,
+      "p_drop": 0.309,
+      "w": 1.664
+    },
+    {
+      "tick_idx": 99,
+      "tick": 100,
+      "t": 300.1,
+      "p_drop": 0.298,
+      "w": 1.634
+    }
+  ],
+  "comparison_table": {
+    "shove": {
+      "mean_H": 0.3082,
+      "gini_H": 0.2212,
+      "mean_v_loud": 0.5716,
+      "mean_v_quiet": 0.3986,
+      "loud_minus_quiet_v": 0.1731,
+      "drop_front_H": 0.4719,
+      "drop_back_H": 0.1498,
+      "drop_front_E": 0.9577,
+      "drop_back_E": 0.5781,
+      "drop_top20_diehard_share": 0.6687,
+      "anticipation_mean_lead_s": 10.5,
+      "pre_15s_v_gain": 0.0813,
+      "mean_E_at_drop_onsets": 0.7852,
+      "breakdown_rest_share": 0.0161,
+      "exhaustion_events": 0,
+      "gridlock_rate": 0.8496,
+      "H_spatial_contagion_r": 0.997,
+      "E_spatial_contagion_r": 0.9739,
+      "ask_acceptance_rate": null,
+      "mean_keenness_overstatement": null,
+      "api_calls_total": 113,
+      "api_failures": 0,
+      "api_failure_rate": 0.0,
+      "rate_limit_errors": 0,
+      "tick_latency_p50_ms": 833.1,
+      "tick_latency_p95_ms": 2028.9
+    },
+    "silent": {
+      "mean_H": 0.3133,
+      "gini_H": 0.1737,
+      "mean_v_loud": 0.5511,
+      "mean_v_quiet": 0.4782,
+      "loud_minus_quiet_v": 0.0729,
+      "drop_front_H": 0.4576,
+      "drop_back_H": 0.1734,
+      "drop_front_E": 0.9531,
+      "drop_back_E": 0.6777,
+      "drop_top20_diehard_share": 0.5969,
+      "anticipation_mean_lead_s": 12.75,
+      "pre_15s_v_gain": 0.0144,
+      "mean_E_at_drop_onsets": 0.8015,
+      "breakdown_rest_share": 0.0,
+      "exhaustion_events": 0,
+      "gridlock_rate": 0.3272,
+      "H_spatial_contagion_r": 0.9896,
+      "E_spatial_contagion_r": 0.9651,
+      "ask_acceptance_rate": null,
+      "mean_keenness_overstatement": null,
+      "api_calls_total": 651,
+      "api_failures": 0,
+      "api_failure_rate": 0.0,
+      "rate_limit_errors": 0,
+      "tick_latency_p50_ms": 1042.8,
+      "tick_latency_p95_ms": 2079.3
+    },
+    "talk": {
+      "mean_H": 0.3125,
+      "gini_H": 0.1783,
+      "mean_v_loud": 0.5502,
+      "mean_v_quiet": 0.4728,
+      "loud_minus_quiet_v": 0.0774,
+      "drop_front_H": 0.4597,
+      "drop_back_H": 0.1687,
+      "drop_front_E": 0.9513,
+      "drop_back_E": 0.682,
+      "drop_top20_diehard_share": 0.6094,
+      "anticipation_mean_lead_s": 12.0,
+      "pre_15s_v_gain": 0.014,
+      "mean_E_at_drop_onsets": 0.8068,
+      "breakdown_rest_share": 0.0011,
+      "exhaustion_events": 0,
+      "gridlock_rate": 0.3342,
+      "H_spatial_contagion_r": 0.99,
+      "E_spatial_contagion_r": 0.9645,
+      "ask_acceptance_rate": 0.3328,
+      "mean_keenness_overstatement": 0.0329,
+      "api_calls_total": 1263,
+      "api_failures": 0,
+      "api_failure_rate": 0.0,
+      "rate_limit_errors": 0,
+      "tick_latency_p50_ms": 1184.7,
+      "tick_latency_p95_ms": 2015.9
+    }
+  },
+  "conditions": {
+    "shove": {
+      "condition": "shove",
+      "run_dir": "runs/20261121_201121_shove_42",
+      "seed": 42,
+      "track": "getuphereletsdance.mp3",
+      "n_ticks": 113,
+      "duration_s": 339.1,
+      "welfare": {
+        "mean_H": 0.3082,
+        "median_H": 0.2784,
+        "std_H": 0.1195,
+        "min_H": 0.142,
+        "max_H": 0.5178,
+        "gini_H": 0.2212,
+        "by_archetype_mean_H": {
+          "diehard": 0.4374,
+          "between": 0.2976,
+          "dancer": 0.1931
+        },
+        "by_archetype_mean_v": {
+          "diehard": 0.6899,
+          "between": 0.5197,
+          "dancer": 0.3229
+        }
+      },
+      "crowd_dynamics": {
+        "mean_v_overall": 0.5117,
+        "mean_v_loud": 0.5716,
+        "mean_v_quiet": 0.3986,
+        "loud_minus_quiet_v": 0.1731,
+        "drop_front_H": 0.4719,
+        "drop_back_H": 0.1498,
+        "drop_front_minus_back_H": 0.3222,
+        "drop_front_E": 0.9577,
+        "drop_back_E": 0.5781,
+        "drop_top20_diehard_share": 0.6687
+      },
+      "anticipation": {
+        "n_drops": 4,
+        "mean_lead_time_s": 10.5,
+        "median_lead_time_s": 12.0,
+        "mean_pre_15s_v_gain": 0.0813,
+        "events": [
+          {
+            "drop_t": 63.1,
+            "trough_t": 45.1,
+            "trough_v": 0.3398,
+            "rise_t": 54.1,
+            "v_at_drop": 0.4901,
+            "lead_time_s": 9.0,
+            "pre_15s_v_gain": 0.1445
+          },
+          {
+            "drop_t": 183.1,
+            "trough_t": 162.1,
+            "trough_v": 0.2516,
+            "rise_t": 168.1,
+            "v_at_drop": 0.4868,
+            "lead_time_s": 15.0,
+            "pre_15s_v_gain": 0.179
+          },
+          {
+            "drop_t": 258.1,
+            "trough_t": 255.1,
+            "trough_v": 0.5211,
+            "rise_t": 258.1,
+            "v_at_drop": 0.5575,
+            "lead_time_s": 0.0,
+            "pre_15s_v_gain": -0.0124
+          },
+          {
+            "drop_t": 300.1,
+            "trough_t": 276.1,
+            "trough_v": 0.5279,
+            "rise_t": 282.1,
+            "v_at_drop": 0.5802,
+            "lead_time_s": 18.0,
+            "pre_15s_v_gain": 0.0143
+          }
+        ]
+      },
+      "pacing": {
+        "mean_E_overall": 0.813,
+        "mean_E_at_drop_onsets": 0.7852,
+        "min_mean_E": 0.7587,
+        "breakdown_rest_share": 0.0161,
+        "exhaustion_events": 0,
+        "tick_exhaustion_transitions": 0
+      },
+      "gridlock": {
+        "gridlock_rate": 0.8496,
+        "push_ticks_total": 5039,
+        "push_ticks_stalled": 4281,
+        "drop_gridlock_rate": 0.7977,
+        "mean_push_dv": 0.00456
+      },
+      "contagion": {
+        "H_neighbor_corr": 0.997,
+        "E_neighbor_corr": 0.9739,
+        "n_agent_ticks": 10917
+      },
+      "ring_agreement": {},
+      "asks": {
+        "asks_total": 0
+      },
+      "ols_regression": {
+        "n": 100,
+        "r_squared": 0.6302,
+        "adj_r_squared": 0.6147,
+        "omitted_zero_variance": [
+          "ask_success_rate"
+        ],
+        "terms": {
+          "intercept": {
+            "coef": 0.20305,
+            "se": 0.0891,
+            "t": 2.279,
+            "p": 0.02491
+          },
+          "k": {
+            "coef": 0.39284,
+            "se": 0.08363,
+            "t": 4.698,
+            "p": 1e-05
+          },
+          "s": {
+            "coef": -0.2547,
+            "se": 0.08434,
+            "t": -3.02,
+            "p": 0.00325
+          },
+          "start_lane": {
+            "coef": 0.0036,
+            "se": 0.00262,
+            "t": 1.376,
+            "p": 0.17212
+          },
+          "rested_in_breakdown": {
+            "coef": -0.34657,
+            "se": 0.1944,
+            "t": -1.783,
+            "p": 0.07782
+          }
+        }
+      },
+      "ols_regression_with_centrality": {
+        "n": 100,
+        "r_squared": 0.6262,
+        "adj_r_squared": 0.6105,
+        "omitted_zero_variance": [
+          "ask_success_rate"
+        ],
+        "terms": {
+          "intercept": {
+            "coef": 0.21887,
+            "se": 0.08877,
+            "t": 2.466,
+            "p": 0.01547
+          },
+          "k": {
+            "coef": 0.38423,
+            "se": 0.08458,
+            "t": 4.543,
+            "p": 2e-05
+          },
+          "s": {
+            "coef": -0.26375,
+            "se": 0.08518,
+            "t": -3.096,
+            "p": 0.00257
+          },
+          "lane_centrality": {
+            "coef": 0.02221,
+            "se": 0.02401,
+            "t": 0.925,
+            "p": 0.35729
+          },
+          "rested_in_breakdown": {
+            "coef": -0.31643,
+            "se": 0.19385,
+            "t": -1.632,
+            "p": 0.10591
+          }
+        }
+      },
+      "api": {
+        "api_calls_total": 113,
+        "api_failures": 0,
+        "api_failure_rate": 0.0,
+        "rate_limit_errors": 0,
+        "tick_latency_p50_ms": 833.1,
+        "tick_latency_p95_ms": 2028.9,
+        "tick_latency_max_ms": 4407.5,
+        "total_tokens": 99623,
+        "hydrogen_calls": 0,
+        "hydrogen_failures": 0
+      }
+    },
+    "silent": {
+      "condition": "silent",
+      "run_dir": "runs/20261121_201336_silent_42",
+      "seed": 42,
+      "track": "getuphereletsdance.mp3",
+      "n_ticks": 113,
+      "duration_s": 339.1,
+      "welfare": {
+        "mean_H": 0.3133,
+        "median_H": 0.3308,
+        "std_H": 0.0949,
+        "min_H": 0.1538,
+        "max_H": 0.4826,
+        "gini_H": 0.1737,
+        "by_archetype_mean_H": {
+          "diehard": 0.406,
+          "between": 0.3176,
+          "dancer": 0.2149
+        },
+        "by_archetype_mean_v": {
+          "diehard": 0.6592,
+          "between": 0.5385,
+          "dancer": 0.3562
+        }
+      },
+      "crowd_dynamics": {
+        "mean_v_overall": 0.52,
+        "mean_v_loud": 0.5511,
+        "mean_v_quiet": 0.4782,
+        "loud_minus_quiet_v": 0.0729,
+        "drop_front_H": 0.4576,
+        "drop_back_H": 0.1734,
+        "drop_front_minus_back_H": 0.2843,
+        "drop_front_E": 0.9531,
+        "drop_back_E": 0.6777,
+        "drop_top20_diehard_share": 0.5969
+      },
+      "anticipation": {
+        "n_drops": 4,
+        "mean_lead_time_s": 12.75,
+        "median_lead_time_s": 13.5,
+        "mean_pre_15s_v_gain": 0.0144,
+        "events": [
+          {
+            "drop_t": 63.1,
+            "trough_t": 45.1,
+            "trough_v": 0.4065,
+            "rise_t": 51.1,
+            "v_at_drop": 0.4439,
+            "lead_time_s": 12.0,
+            "pre_15s_v_gain": 0.0131
+          },
+          {
+            "drop_t": 183.1,
+            "trough_t": 153.1,
+            "trough_v": 0.3495,
+            "rise_t": 156.1,
+            "v_at_drop": 0.4877,
+            "lead_time_s": 27.0,
+            "pre_15s_v_gain": 0.1018
+          },
+          {
+            "drop_t": 258.1,
+            "trough_t": 255.1,
+            "trough_v": 0.4946,
+            "rise_t": 261.1,
+            "v_at_drop": 0.5107,
+            "lead_time_s": -3.0,
+            "pre_15s_v_gain": -0.0339
+          },
+          {
+            "drop_t": 300.1,
+            "trough_t": 279.1,
+            "trough_v": 0.4785,
+            "rise_t": 285.1,
+            "v_at_drop": 0.5488,
+            "lead_time_s": 15.0,
+            "pre_15s_v_gain": -0.0234
+          }
+        ]
+      },
+      "pacing": {
+        "mean_E_overall": 0.8542,
+        "mean_E_at_drop_onsets": 0.8015,
+        "min_mean_E": 0.6162,
+        "breakdown_rest_share": 0.0,
+        "exhaustion_events": 0,
+        "tick_exhaustion_transitions": 0
+      },
+      "gridlock": {
+        "gridlock_rate": 0.3272,
+        "push_ticks_total": 3062,
+        "push_ticks_stalled": 1002,
+        "drop_gridlock_rate": 0.3442,
+        "mean_push_dv": 0.05586
+      },
+      "contagion": {
+        "H_neighbor_corr": 0.9896,
+        "E_neighbor_corr": 0.9651,
+        "n_agent_ticks": 10894
+      },
+      "ring_agreement": {
+        "1": {
+          "n_ticks": 97,
+          "section_agreement": 0.8557,
+          "drop_eta_agreement": 0.9072,
+          "section_prob_overlap": 0.9041,
+          "drop_recall": 1.0,
+          "mean_p_drop_on_house_drop": 0.386,
+          "build_anticipation_hit": 0.4
+        },
+        "2": {
+          "n_ticks": 112,
+          "section_agreement": 0.875,
+          "drop_eta_agreement": 0.9286,
+          "section_prob_overlap": 0.9054,
+          "drop_recall": 0.6875,
+          "mean_p_drop_on_house_drop": 0.3588,
+          "build_anticipation_hit": 0.5556
+        },
+        "3": {
+          "n_ticks": 113,
+          "section_agreement": 0.8584,
+          "drop_eta_agreement": 0.9204,
+          "section_prob_overlap": 0.9005,
+          "drop_recall": 0.75,
+          "mean_p_drop_on_house_drop": 0.3386,
+          "build_anticipation_hit": 0.2222
+        },
+        "4": {
+          "n_ticks": 113,
+          "section_agreement": 0.8938,
+          "drop_eta_agreement": 0.9469,
+          "section_prob_overlap": 0.8876,
+          "drop_recall": 0.6875,
+          "mean_p_drop_on_house_drop": 0.348,
+          "build_anticipation_hit": 0.0
+        },
+        "5": {
+          "n_ticks": 103,
+          "section_agreement": 0.8447,
+          "drop_eta_agreement": 0.8932,
+          "section_prob_overlap": 0.8742,
+          "drop_recall": 0.6429,
+          "mean_p_drop_on_house_drop": 0.3468,
+          "build_anticipation_hit": 0.1111
+        }
+      },
+      "asks": {
+        "asks_total": 0
+      },
+      "ols_regression": {
+        "n": 100,
+        "r_squared": 0.6724,
+        "adj_r_squared": 0.6622,
+        "omitted_zero_variance": [
+          "ask_success_rate",
+          "rested_in_breakdown"
+        ],
+        "terms": {
+          "intercept": {
+            "coef": 0.32887,
+            "se": 0.06593,
+            "t": 4.988,
+            "p": 0.0
+          },
+          "k": {
+            "coef": 0.23131,
+            "se": 0.06219,
+            "t": 3.719,
+            "p": 0.00034
+          },
+          "s": {
+            "coef": -0.33207,
+            "se": 0.06029,
+            "t": -5.508,
+            "p": 0.0
+          },
+          "start_lane": {
+            "coef": 0.00598,
+            "se": 0.00193,
+            "t": 3.094,
+            "p": 0.00259
+          }
+        }
+      },
+      "ols_regression_with_centrality": {
+        "n": 100,
+        "r_squared": 0.6431,
+        "adj_r_squared": 0.632,
+        "omitted_zero_variance": [
+          "ask_success_rate",
+          "rested_in_breakdown"
+        ],
+        "terms": {
+          "intercept": {
+            "coef": 0.35434,
+            "se": 0.06829,
+            "t": 5.189,
+            "p": 0.0
+          },
+          "k": {
+            "coef": 0.23711,
+            "se": 0.06529,
+            "t": 3.632,
+            "p": 0.00045
+          },
+          "s": {
+            "coef": -0.32108,
+            "se": 0.06327,
+            "t": -5.075,
+            "p": 0.0
+          },
+          "lane_centrality": {
+            "coef": -0.01779,
+            "se": 0.01854,
+            "t": -0.96,
+            "p": 0.33969
+          }
+        }
+      },
+      "api": {
+        "api_calls_total": 651,
+        "api_failures": 0,
+        "api_failure_rate": 0.0,
+        "rate_limit_errors": 0,
+        "tick_latency_p50_ms": 1042.8,
+        "tick_latency_p95_ms": 2079.3,
+        "tick_latency_max_ms": 2998.8,
+        "total_tokens": 5582432,
+        "hydrogen_calls": 0,
+        "hydrogen_failures": 0
+      }
+    },
+    "talk": {
+      "condition": "talk",
+      "run_dir": "runs/20261121_201643_talk_42",
+      "seed": 42,
+      "track": "getuphereletsdance.mp3",
+      "n_ticks": 113,
+      "duration_s": 339.1,
+      "welfare": {
+        "mean_H": 0.3125,
+        "median_H": 0.3158,
+        "std_H": 0.0968,
+        "min_H": 0.1434,
+        "max_H": 0.4663,
+        "gini_H": 0.1783,
+        "by_archetype_mean_H": {
+          "diehard": 0.4081,
+          "between": 0.3174,
+          "dancer": 0.2102
+        },
+        "by_archetype_mean_v": {
+          "diehard": 0.6636,
+          "between": 0.5373,
+          "dancer": 0.3456
+        }
+      },
+      "crowd_dynamics": {
+        "mean_v_overall": 0.5177,
+        "mean_v_loud": 0.5502,
+        "mean_v_quiet": 0.4728,
+        "loud_minus_quiet_v": 0.0774,
+        "drop_front_H": 0.4597,
+        "drop_back_H": 0.1687,
+        "drop_front_minus_back_H": 0.291,
+        "drop_front_E": 0.9513,
+        "drop_back_E": 0.682,
+        "drop_top20_diehard_share": 0.6094
+      },
+      "anticipation": {
+        "n_drops": 4,
+        "mean_lead_time_s": 12.0,
+        "median_lead_time_s": 12.0,
+        "mean_pre_15s_v_gain": 0.014,
+        "events": [
+          {
+            "drop_t": 63.1,
+            "trough_t": 45.1,
+            "trough_v": 0.4014,
+            "rise_t": 54.1,
+            "v_at_drop": 0.4371,
+            "lead_time_s": 9.0,
+            "pre_15s_v_gain": 0.0172
+          },
+          {
+            "drop_t": 183.1,
+            "trough_t": 153.1,
+            "trough_v": 0.3444,
+            "rise_t": 156.1,
+            "v_at_drop": 0.481,
+            "lead_time_s": 27.0,
+            "pre_15s_v_gain": 0.0997
+          },
+          {
+            "drop_t": 258.1,
+            "trough_t": 255.1,
+            "trough_v": 0.4893,
+            "rise_t": 261.1,
+            "v_at_drop": 0.5029,
+            "lead_time_s": -3.0,
+            "pre_15s_v_gain": -0.0526
+          },
+          {
+            "drop_t": 300.1,
+            "trough_t": 279.1,
+            "trough_v": 0.4843,
+            "rise_t": 285.1,
+            "v_at_drop": 0.5523,
+            "lead_time_s": 15.0,
+            "pre_15s_v_gain": -0.0084
+          }
+        ]
+      },
+      "pacing": {
+        "mean_E_overall": 0.8581,
+        "mean_E_at_drop_onsets": 0.8068,
+        "min_mean_E": 0.6021,
+        "breakdown_rest_share": 0.0011,
+        "exhaustion_events": 0,
+        "tick_exhaustion_transitions": 0
+      },
+      "gridlock": {
+        "gridlock_rate": 0.3342,
+        "push_ticks_total": 3034,
+        "push_ticks_stalled": 1014,
+        "drop_gridlock_rate": 0.3656,
+        "mean_push_dv": 0.05516
+      },
+      "contagion": {
+        "H_neighbor_corr": 0.99,
+        "E_neighbor_corr": 0.9645,
+        "n_agent_ticks": 10874
+      },
+      "ring_agreement": {
+        "1": {
+          "n_ticks": 96,
+          "section_agreement": 0.8542,
+          "drop_eta_agreement": 0.9062,
+          "section_prob_overlap": 0.9039,
+          "drop_recall": 1.0,
+          "mean_p_drop_on_house_drop": 0.386,
+          "build_anticipation_hit": 0.4
+        },
+        "2": {
+          "n_ticks": 112,
+          "section_agreement": 0.875,
+          "drop_eta_agreement": 0.9286,
+          "section_prob_overlap": 0.9054,
+          "drop_recall": 0.6875,
+          "mean_p_drop_on_house_drop": 0.3588,
+          "build_anticipation_hit": 0.5556
+        },
+        "3": {
+          "n_ticks": 113,
+          "section_agreement": 0.8584,
+          "drop_eta_agreement": 0.9204,
+          "section_prob_overlap": 0.9008,
+          "drop_recall": 0.75,
+          "mean_p_drop_on_house_drop": 0.3386,
+          "build_anticipation_hit": 0.2222
+        },
+        "4": {
+          "n_ticks": 113,
+          "section_agreement": 0.8938,
+          "drop_eta_agreement": 0.9469,
+          "section_prob_overlap": 0.8876,
+          "drop_recall": 0.6875,
+          "mean_p_drop_on_house_drop": 0.348,
+          "build_anticipation_hit": 0.0
+        },
+        "5": {
+          "n_ticks": 108,
+          "section_agreement": 0.8611,
+          "drop_eta_agreement": 0.8981,
+          "section_prob_overlap": 0.8773,
+          "drop_recall": 0.6429,
+          "mean_p_drop_on_house_drop": 0.3405,
+          "build_anticipation_hit": 0.1111
+        }
+      },
+      "asks": {
+        "asks_total": 604,
+        "asks_yes": 201,
+        "asks_no": 403,
+        "ask_acceptance_rate": 0.3328,
+        "mean_answer_p": 0.3278,
+        "hydrogen_latency_p50_ms": 2772.2,
+        "hydrogen_latency_p95_ms": 4028.8,
+        "reciprocity": {
+          "base_yes_rate": 0.3328,
+          "asker_yielded_before_n": 57,
+          "asker_yielded_before_yes_rate": 0.4211,
+          "asker_yielded_before_mean_p": 0.4003,
+          "no_prior_yield_n": 547,
+          "no_prior_yield_yes_rate": 0.3236,
+          "no_prior_yield_mean_p": 0.3202
+        },
+        "keenness_truth_check": {
+          "mean_overstatement": 0.0329,
+          "median_overstatement": 0.0303,
+          "max_overstatement": 0.1168,
+          "min_overstatement": -0.0041,
+          "share_overstated_gt_0_1": 0.005,
+          "count_overstated_gt_0_3": 0,
+          "yes_rate_when_overstated_gt_0_1": 0.0,
+          "yes_rate_when_honest_within_0_1": 0.3344
+        },
+        "by_asker_archetype": {
+          "diehard": {
+            "count": 519,
+            "yes_rate": 0.3487,
+            "mean_answer_p": 0.3266,
+            "mean_keenness_diff": 0.0298,
+            "mean_claimed_k": 0.823,
+            "mean_true_k": 0.7932
+          },
+          "between": {
+            "count": 83,
+            "yes_rate": 0.2289,
+            "mean_answer_p": 0.3319,
+            "mean_keenness_diff": 0.0518,
+            "mean_claimed_k": 0.628,
+            "mean_true_k": 0.5761
+          },
+          "dancer": {
+            "count": 2,
+            "yes_rate": 0.5,
+            "mean_answer_p": 0.4479,
+            "mean_keenness_diff": 0.0324,
+            "mean_claimed_k": 0.48,
+            "mean_true_k": 0.4476
+          }
+        },
+        "by_blocker_archetype": {
+          "diehard": {
+            "count": 433,
+            "yield_rate": 0.2771,
+            "mean_answer_p": 0.303
+          },
+          "between": {
+            "count": 160,
+            "yield_rate": 0.4562,
+            "mean_answer_p": 0.3874
+          },
+          "dancer": {
+            "count": 11,
+            "yield_rate": 0.7273,
+            "mean_answer_p": 0.4343
+          }
+        }
+      },
+      "ols_regression": {
+        "n": 100,
+        "r_squared": 0.6752,
+        "adj_r_squared": 0.6579,
+        "omitted_zero_variance": [],
+        "terms": {
+          "intercept": {
+            "coef": 0.27606,
+            "se": 0.07009,
+            "t": 3.938,
+            "p": 0.00016
+          },
+          "k": {
+            "coef": 0.25529,
+            "se": 0.0658,
+            "t": 3.88,
+            "p": 0.00019
+          },
+          "s": {
+            "coef": -0.26021,
+            "se": 0.06523,
+            "t": -3.989,
+            "p": 0.00013
+          },
+          "start_lane": {
+            "coef": 0.00303,
+            "se": 0.002,
+            "t": 1.514,
+            "p": 0.13342
+          },
+          "ask_success_rate": {
+            "coef": 0.06665,
+            "se": 0.02707,
+            "t": 2.462,
+            "p": 0.01563
+          },
+          "rested_in_breakdown": {
+            "coef": 0.52921,
+            "se": 0.75601,
+            "t": 0.7,
+            "p": 0.48565
+          }
+        }
+      },
+      "ols_regression_with_centrality": {
+        "n": 100,
+        "r_squared": 0.6687,
+        "adj_r_squared": 0.6511,
+        "omitted_zero_variance": [],
+        "terms": {
+          "intercept": {
+            "coef": 0.28917,
+            "se": 0.07019,
+            "t": 4.12,
+            "p": 8e-05
+          },
+          "k": {
+            "coef": 0.25682,
+            "se": 0.06687,
+            "t": 3.841,
+            "p": 0.00022
+          },
+          "s": {
+            "coef": -0.25215,
+            "se": 0.06635,
+            "t": -3.8,
+            "p": 0.00026
+          },
+          "lane_centrality": {
+            "coef": -0.01202,
+            "se": 0.01847,
+            "t": -0.651,
+            "p": 0.51675
+          },
+          "ask_success_rate": {
+            "coef": 0.07056,
+            "se": 0.02726,
+            "t": 2.588,
+            "p": 0.01118
+          },
+          "rested_in_breakdown": {
+            "coef": 0.45965,
+            "se": 0.76237,
+            "t": 0.603,
+            "p": 0.54801
+          }
+        }
+      },
+      "api": {
+        "api_calls_total": 1263,
+        "api_failures": 0,
+        "api_failure_rate": 0.0,
+        "rate_limit_errors": 0,
+        "tick_latency_p50_ms": 1184.7,
+        "tick_latency_p95_ms": 2015.9,
+        "tick_latency_max_ms": 3213.0,
+        "total_tokens": 6223275,
+        "hydrogen_calls": 608,
+        "hydrogen_failures": 0
+      }
+    }
+  }
+}

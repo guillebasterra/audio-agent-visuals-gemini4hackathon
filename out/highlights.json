@@ -1,0 +1,357 @@
+{
+  "run_dir": "runs/20261121_201643_talk_42",
+  "condition": "talk",
+  "seed": 42,
+  "track": "getuphereletsdance.mp3",
+  "biggest_H_swings": [
+    {
+      "agent_id": 98,
+      "label": "A98",
+      "archetype": "between",
+      "k": 0.5487,
+      "s": 0.4668,
+      "h_min": 0.0988,
+      "t_min": 60.1,
+      "h_max": 0.6557,
+      "t_max": 108.1,
+      "swing": 0.5569,
+      "direction": "rise"
+    },
+    {
+      "agent_id": 81,
+      "label": "A81",
+      "archetype": "diehard",
+      "k": 0.7556,
+      "s": 0.3109,
+      "h_min": 0.165,
+      "t_min": 168.1,
+      "h_max": 0.686,
+      "t_max": 333.1,
+      "swing": 0.521,
+      "direction": "rise"
+    },
+    {
+      "agent_id": 69,
+      "label": "A69",
+      "archetype": "diehard",
+      "k": 0.7058,
+      "s": 0.2982,
+      "h_min": 0.1361,
+      "t_min": 150.1,
+      "h_max": 0.6445,
+      "t_max": 333.1,
+      "swing": 0.5084,
+      "direction": "rise"
+    },
+    {
+      "agent_id": 42,
+      "label": "A42",
+      "archetype": "between",
+      "k": 0.6202,
+      "s": 0.4587,
+      "h_min": 0.131,
+      "t_min": 168.1,
+      "h_max": 0.6362,
+      "t_max": 333.1,
+      "swing": 0.5052,
+      "direction": "rise"
+    },
+    {
+      "agent_id": 93,
+      "label": "A93",
+      "archetype": "diehard",
+      "k": 0.7021,
+      "s": 0.2918,
+      "h_min": 0.1639,
+      "t_min": 180.1,
+      "h_max": 0.6631,
+      "t_max": 333.1,
+      "swing": 0.4992,
+      "direction": "rise"
+    }
+  ],
+  "overstated_gt_0_3_and_yielded": [],
+  "overstated_gt_0_3_all_outcomes": [],
+  "top_exaggerated_yields": [
+    {
+      "id": "q331",
+      "t": 189.1,
+      "tick": 63,
+      "from": 27,
+      "to": 45,
+      "asker_archetype": "diehard",
+      "blocker_archetype": "diehard",
+      "true_k": 0.7028,
+      "claimed_keenness": 0.8,
+      "overstatement": 0.0972,
+      "answer": "yes",
+      "answer_p": 0.2884,
+      "text": "The drop is hitting right now, mind if I squeeze past you?"
+    },
+    {
+      "id": "q209",
+      "t": 111.1,
+      "tick": 37,
+      "from": 61,
+      "to": 11,
+      "asker_archetype": "diehard",
+      "blocker_archetype": "diehard",
+      "true_k": 0.7315,
+      "claimed_keenness": 0.82,
+      "overstatement": 0.0885,
+      "answer": "yes",
+      "answer_p": 0.2473,
+      "text": "The drop is hitting right now, mind if I slip past you again?"
+    },
+    {
+      "id": "q138",
+      "t": 81.1,
+      "tick": 27,
+      "from": 84,
+      "to": 87,
+      "asker_archetype": "between",
+      "blocker_archetype": "diehard",
+      "true_k": 0.5632,
+      "claimed_keenness": 0.65,
+      "overstatement": 0.0868,
+      "answer": "yes",
+      "answer_p": 0.2234,
+      "text": "Drop's here! Can I slip by you for a second?"
+    },
+    {
+      "id": "q266",
+      "t": 159.1,
+      "tick": 53,
+      "from": 20,
+      "to": 61,
+      "asker_archetype": "between",
+      "blocker_archetype": "diehard",
+      "true_k": 0.6406,
+      "claimed_keenness": 0.72,
+      "overstatement": 0.0794,
+      "answer": "yes",
+      "answer_p": 0.2705,
+      "text": "Hey, you're pushing anyway\u2014let me slide past you to the front."
+    },
+    {
+      "id": "q333",
+      "t": 189.1,
+      "tick": 63,
+      "from": 20,
+      "to": 11,
+      "asker_archetype": "between",
+      "blocker_archetype": "diehard",
+      "true_k": 0.6406,
+      "claimed_keenness": 0.72,
+      "overstatement": 0.0794,
+      "answer": "yes",
+      "answer_p": 0.3334,
+      "text": "Drop's hitting right now, let me squeeze past you!"
+    }
+  ],
+  "most_asked_agents": [
+    {
+      "agent_id": 81,
+      "label": "A81",
+      "archetype": "diehard",
+      "k": 0.7556,
+      "s": 0.3109,
+      "times_asked": 21,
+      "times_yielded": 5,
+      "yield_rate": 0.238
+    },
+    {
+      "agent_id": 47,
+      "label": "A47",
+      "archetype": "between",
+      "k": 0.6215,
+      "s": 0.5426,
+      "times_asked": 20,
+      "times_yielded": 9,
+      "yield_rate": 0.45
+    },
+    {
+      "agent_id": 24,
+      "label": "A24",
+      "archetype": "diehard",
+      "k": 0.7525,
+      "s": 0.4374,
+      "times_asked": 20,
+      "times_yielded": 2,
+      "yield_rate": 0.1
+    },
+    {
+      "agent_id": 35,
+      "label": "A35",
+      "archetype": "diehard",
+      "k": 0.8212,
+      "s": 0.4235,
+      "times_asked": 19,
+      "times_yielded": 3,
+      "yield_rate": 0.158
+    },
+    {
+      "agent_id": 58,
+      "label": "A58",
+      "archetype": "diehard",
+      "k": 0.8199,
+      "s": 0.4362,
+      "times_asked": 19,
+      "times_yielded": 3,
+      "yield_rate": 0.158
+    }
+  ],
+  "most_yielding_agents": [
+    {
+      "agent_id": 47,
+      "label": "A47",
+      "archetype": "between",
+      "k": 0.6215,
+      "s": 0.5426,
+      "times_yielded": 9,
+      "times_asked": 20,
+      "yield_rate": 0.45
+    },
+    {
+      "agent_id": 45,
+      "label": "A45",
+      "archetype": "diehard",
+      "k": 0.8687,
+      "s": 0.4305,
+      "times_yielded": 9,
+      "times_asked": 15,
+      "yield_rate": 0.6
+    },
+    {
+      "agent_id": 11,
+      "label": "A11",
+      "archetype": "diehard",
+      "k": 0.7083,
+      "s": 0.3488,
+      "times_yielded": 9,
+      "times_asked": 18,
+      "yield_rate": 0.5
+    },
+    {
+      "agent_id": 18,
+      "label": "A18",
+      "archetype": "diehard",
+      "k": 0.8537,
+      "s": 0.2715,
+      "times_yielded": 8,
+      "times_asked": 15,
+      "yield_rate": 0.533
+    },
+    {
+      "agent_id": 52,
+      "label": "A52",
+      "archetype": "diehard",
+      "k": 0.7576,
+      "s": 0.397,
+      "times_yielded": 7,
+      "times_asked": 16,
+      "yield_rate": 0.438
+    }
+  ],
+  "most_asking_agents": [
+    {
+      "agent_id": 18,
+      "label": "A18",
+      "archetype": "diehard",
+      "k": 0.8537,
+      "s": 0.2715,
+      "asks_made": 36,
+      "asks_accepted": 14,
+      "success_rate": 0.389
+    },
+    {
+      "agent_id": 10,
+      "label": "A10",
+      "archetype": "diehard",
+      "k": 0.8255,
+      "s": 0.3668,
+      "asks_made": 27,
+      "asks_accepted": 9,
+      "success_rate": 0.333
+    },
+    {
+      "agent_id": 7,
+      "label": "A7",
+      "archetype": "diehard",
+      "k": 0.8558,
+      "s": 0.3934,
+      "asks_made": 27,
+      "asks_accepted": 6,
+      "success_rate": 0.222
+    },
+    {
+      "agent_id": 12,
+      "label": "A12",
+      "archetype": "diehard",
+      "k": 0.8175,
+      "s": 0.2841,
+      "asks_made": 27,
+      "asks_accepted": 10,
+      "success_rate": 0.37
+    },
+    {
+      "agent_id": 94,
+      "label": "A94",
+      "archetype": "diehard",
+      "k": 0.8673,
+      "s": 0.4478,
+      "asks_made": 26,
+      "asks_accepted": 8,
+      "success_rate": 0.308
+    }
+  ],
+  "max_pre_drop_compression": {
+    "drop_onset_t": 300.1,
+    "peak_pre_drop_t": 291.1,
+    "seconds_before_drop": 9.0,
+    "mean_v": 0.6327,
+    "mean_rho": 0.5975,
+    "house_section_at_peak": "groove"
+  },
+  "all_pre_drop_compressions": [
+    {
+      "drop_onset_t": 63.1,
+      "peak_pre_drop_t": 57.1,
+      "seconds_before_drop": 6.0,
+      "mean_v": 0.4999,
+      "mean_rho": 0.425,
+      "house_section_at_peak": "breakdown"
+    },
+    {
+      "drop_onset_t": 183.1,
+      "peak_pre_drop_t": 177.1,
+      "seconds_before_drop": 6.0,
+      "mean_v": 0.4865,
+      "mean_rho": 0.445,
+      "house_section_at_peak": "breakdown"
+    },
+    {
+      "drop_onset_t": 258.1,
+      "peak_pre_drop_t": 246.1,
+      "seconds_before_drop": 12.0,
+      "mean_v": 0.5788,
+      "mean_rho": 0.5225,
+      "house_section_at_peak": "groove"
+    },
+    {
+      "drop_onset_t": 300.1,
+      "peak_pre_drop_t": 291.1,
+      "seconds_before_drop": 9.0,
+      "mean_v": 0.6327,
+      "mean_rho": 0.5975,
+      "house_section_at_peak": "groove"
+    }
+  ],
+  "overall_peak_compression": {
+    "t": 30.1,
+    "tick": 10,
+    "mean_v": 0.645,
+    "mean_rho": 0.5975,
+    "house_section": "groove"
+  }
+}

@@ -96,6 +96,44 @@ FastAPI `/ws` WebSocket echo was verified for both JSON text frames and 8,000-by
   - **Compact walkable floor:** Shrunk physical bounds to `x ∈ [0.15, 0.85]`, `y ∈ [0.03, 0.70]` (isotropic `0.70 × 0.70` floor, rescaling `RING_EDGES = (0.14, 0.28, 0.42, 0.56)`, `DJ_SEG = [0.36, 0.64]`, `MAX_DIST_TO_DJ = 0.731`, `AGENT_RADIUS = 0.027`, density grid, start positions, and wall-backed core collision reaction), scaled isotropically `1 / 0.70 = 1.43×` onto the full TLC plate so the crowd is denser, weaves naturally, and blobs read ~30% larger on screen.
   - **Probabilistic ask answers:** Sampled blocker `yes` with Bernoulli probability `p` (from `noul`, using a run-seeded RNG) instead of hard-thresholding `p ≥ 0.5`, producing a realistic mix of yields even when blockers are conflicted (`p ≈ 0.30–0.49`).
   - **Clean plate ask bubbles:** Capped on-plate ask bubbles to at most 3 translucent paper pills, offset vertically/horizontally so bubbles never overlap each other and stay clear of the DJ rail.
+- **Phase F — Quota-safe runner & full analysis (`server/gemini_client.py`, `analysis/`):**
+  - **429 backoff & pre-flight quota probe:** Added exponential backoff (`2s, 4s, 8s, 16s` + jitter) for rate-limit retries and a single lightweight Decisions probe before starting each sequential full-MP3 run, automatically rerunning any condition exceeding 5% failed calls.
+  - **Calibrated house-ear regimes for post-hoc analysis:** Because `gemini-decision-1` spreads probability across 7 sections (`groove` often ~0.38 during drops while `p_drop` jumps from `0.07` to `0.30–0.50`), post-hoc drop-onset and breakdown detection uses calibrated house-ear probabilities (`p_drop ≥ 0.29` after a calm spell; `p_breakdown ≥ 0.18` with `w ≤ 1.12`) — strictly from the house ear with zero track labels.
+
+## Phase F: Full-Track Experiment & Analysis
+
+Reproduce the 3-condition comparison (`shove`, `silent`, `talk`) on the same track and seed:
+```bash
+# 1. Run all 3 conditions sequentially (quota-checked, full MP3, seed 42)
+.venv/bin/python -m analysis.run_experiment --seed 42 --conditions shove silent talk
+
+# 2. Generate summary.json + 5 TLC-styled plots (anticipation, welfare/fairness, ring agreement, pacing, who wins + OLS)
+.venv/bin/python -m analysis.analyze --manifest out/experiment_manifest.json --out out
+
+# 3. Extract demo highlight timestamps from the talk run
+.venv/bin/python -m analysis.highlights runs/<talk_run_dir> --out out/highlights.json
+
+# 4. Generate structured narrative report with Gemini 4 Neon (thinking_level="high")
+.venv/bin/python -m analysis.neon_report out/summary.json runs/<talk_run_dir>/asks.jsonl \
+  --highlights out/highlights.json --out out/report.md
+```
+
+### Results (`tracks/getuphereletsdance.mp3`, 340 s / 113 ticks, seed `42`)
+
+| Metric | Shove (no minds) | Silent (Decisions) | Talk (Decisions + Hydrogen) |
+| --- | ---: | ---: | ---: |
+| API calls / failures (rate) | 113 / 0 (**0.00%**) | 651 / 0 (**0.00%**) | 1,263 / 0 (**0.00%**) |
+| Tick latency p50 / p95 | 833 / 2,029 ms | 1,043 / 2,079 ms | 1,185 / 2,016 ms |
+| Mean happiness `H` / Gini | 0.308 / **0.221** | 0.313 / **0.174** | 0.313 / **0.178** |
+| Push gridlock (`dv < 0.01`) | **85.0%** | **32.7%** | **33.4%** |
+| Drop front `H` vs back `H` | 0.472 vs 0.150 | 0.458 vs 0.173 | 0.460 vs 0.169 |
+| Drop front `E` vs back `E` | 0.958 vs 0.578 | 0.953 vs 0.678 | 0.951 vs 0.682 |
+| Post-breakdown drop lead time | +10.5 s | **+12.8 s** | **+12.0 s** |
+| Top-20 front diehard share (drops) | 66.9% | 59.7% | 60.9% |
+| Asks resolved / acceptance | — | — | **604** / **33.3%** (201 yields) |
+| Reciprocity (`P(yes \| prior yield)`) | — | — | **42.1%** vs 32.4% base (**+9.7 pp**) |
+
+Generated outputs in `out/`: `summary.json`, `highlights.json`, `report.md` (Gemini 4 Neon), `anticipation.png`, `welfare_fairness.png`, `ring_agreement.png`, `pacing.png`, `who_wins.png`.
 
 ## Credits
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 from dataclasses import dataclass
 from typing import Any, Generic, Mapping, Optional, Type, TypeVar
@@ -84,13 +85,19 @@ class GeminiClient:
         timeout: Optional[float] = None,
         label: str = "decisions",
     ) -> ApiResult[Any]:
-        """Run a v1beta Decisions call with semaphore, timeout, and 1 retry."""
+        """Run a v1beta Decisions call with semaphore, timeout, and exponential backoff on 429s."""
         t_limit = self._default_timeout if timeout is None else timeout
         last_err: Optional[str] = None
         was_rate_limited = False
         t_start = time.perf_counter()
+        rl_retries = 0
+        other_retries = 0
+        max_rl_retries = 4
+        max_other_retries = 1
+        attempt = 0
 
-        for attempt in range(2):
+        while True:
+            attempt += 1
             try:
                 async with self._decide_sem:
                     call_start = time.perf_counter()
@@ -126,11 +133,21 @@ class GeminiClient:
                 )
             except Exception as exc:
                 last_err = f"{type(exc).__name__}: {exc}"
-                if _is_rate_limit_error(exc):
+                is_rl = _is_rate_limit_error(exc)
+                if is_rl:
                     was_rate_limited = True
-                logger.warning("[%s] attempt %d failed: %s", label, attempt + 1, last_err)
-                if attempt == 0:
-                    await asyncio.sleep(0.8 if was_rate_limited else 0.4)
+                logger.warning("[%s] attempt %d failed: %s", label, attempt, last_err)
+                if is_rl and rl_retries < max_rl_retries:
+                    delay = (2.0 * (2**rl_retries)) + random.uniform(0.0, 0.5)
+                    rl_retries += 1
+                    logger.info("[%s] 429 backoff %.1fs (retry %d/%d)", label, delay, rl_retries, max_rl_retries)
+                    await asyncio.sleep(delay)
+                    continue
+                if not is_rl and other_retries < max_other_retries:
+                    other_retries += 1
+                    await asyncio.sleep(0.4)
+                    continue
+                break
 
         total_ms = (time.perf_counter() - t_start) * 1000.0
         logger.error("[%s] exhausted retries (%.1fms): %s", label, total_ms, last_err)
@@ -148,11 +165,16 @@ class GeminiClient:
         timeout: Optional[float] = None,
         label: str = "hydrogen",
     ) -> ApiResult[T]:
-        """Run a v1beta Interactions call with JSON schema output and Pydantic validation."""
+        """Run a v1beta Interactions call with JSON schema output, Pydantic validation & 429 backoff."""
         t_limit = self._default_timeout if timeout is None else timeout
         last_err: Optional[str] = None
         was_rate_limited = False
         t_start = time.perf_counter()
+        rl_retries = 0
+        other_retries = 0
+        max_rl_retries = 4
+        max_other_retries = 1
+        attempt = 0
 
         kwargs: dict[str, Any] = {
             "model": model,
@@ -168,7 +190,8 @@ class GeminiClient:
         if system_instruction is not None:
             kwargs["system_instruction"] = system_instruction
 
-        for attempt in range(2):
+        while True:
+            attempt += 1
             try:
                 async with self._interact_sem:
                     call_start = time.perf_counter()
@@ -208,15 +231,34 @@ class GeminiClient:
                 )
             except Exception as exc:
                 last_err = f"{type(exc).__name__}: {exc}"
-                if _is_rate_limit_error(exc):
+                is_rl = _is_rate_limit_error(exc)
+                if is_rl:
                     was_rate_limited = True
-                logger.warning("[%s] attempt %d failed: %s", label, attempt + 1, last_err)
-                if attempt == 0:
-                    await asyncio.sleep(0.8 if was_rate_limited else 0.4)
+                logger.warning("[%s] attempt %d failed: %s", label, attempt, last_err)
+                if is_rl and rl_retries < max_rl_retries:
+                    delay = (2.0 * (2**rl_retries)) + random.uniform(0.0, 0.5)
+                    rl_retries += 1
+                    logger.info("[%s] 429 backoff %.1fs (retry %d/%d)", label, delay, rl_retries, max_rl_retries)
+                    await asyncio.sleep(delay)
+                    continue
+                if not is_rl and other_retries < max_other_retries:
+                    other_retries += 1
+                    await asyncio.sleep(0.4)
+                    continue
+                break
 
         total_ms = (time.perf_counter() - t_start) * 1000.0
         logger.error("[%s] exhausted retries (%.1fms): %s", label, total_ms, last_err)
         return ApiResult(ok=False, latency_ms=total_ms, error=last_err, rate_limited=was_rate_limited)
+
+    async def probe_quota(self, timeout: float = 10.0) -> ApiResult[Any]:
+        """Single lightweight Decisions probe to check shared Gemini quota health."""
+        return await self.decide(
+            input_blocks=[{"type": "text", "text": "Health check: ready."}],
+            questions={"ready": {"type": "noul", "instructions": "Does the input text say ready?"}},
+            timeout=timeout,
+            label="quota_probe",
+        )
 
     async def aclose(self) -> None:
         if hasattr(self._client.aio, "aclose"):
