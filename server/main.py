@@ -1,11 +1,11 @@
 """FastAPI server entry point.
 
-Phase C:
+Phase D & E:
 - GET /health, GET /api/status, GET /api/tracks, GET /tracks/{filename}
 - WS /ws/echo: raw JSON + binary echo (Phase 0 diagnostic)
-- WS /ws: Section 9 live contract — sends `init` on connect, streams 30 Hz `physics`
-  frames, handles `clock` and `control` JSON messages (pause, seek, reset, condition),
-  and buffers + records incoming 16 kHz Int16 mono PCM into `runs/<run>/session.wav`.
+- WS /ws: Section 9 live contract — `init`, 30 Hz `physics` frames, ~3 s `decision` frames
+  (house ear + ring Decisions + Hydrogen asks + notable feed events), `clock`/`control`
+  handling, 30 s rolling PCM buffer + `runs/<run>/session.wav` + JSONL logs.
 """
 
 from __future__ import annotations
@@ -22,10 +22,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from server.audio import RollingAudioRecorder
-from server.config import PHYSICS_HZ, TRACKS_DIR
+from server.config import GEMINI_API_KEY, PHYSICS_HZ, TICK_SECONDS, TRACKS_DIR
+from server.gemini_client import GeminiClient
+from server.log import RunLogger
 from server.physics import PhysicsEngine
 from server.shove import apply_shove_actions
 from server.state import VALID_CONDITIONS, CrowdState, init_crowd
+from server.tick import TickLoop
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("agent_crowd.server")
@@ -34,35 +37,63 @@ SHOVE_REFRESH_SECONDS: float = 0.5
 
 
 class SimulationRuntime:
-    """Owns CrowdState, PhysicsEngine, RollingAudioRecorder, WebSocket clients, and 30 Hz loop."""
+    """Owns CrowdState, PhysicsEngine, RollingAudioRecorder, TickLoop, and WebSocket clients."""
 
-    def __init__(self, seed: int = 42, condition: str = "shove") -> None:
+    def __init__(self, seed: int = 42, condition: str = "shove", enable_ticks: bool = True) -> None:
         self.crowd: CrowdState = init_crowd(seed=seed, condition=condition)
         self.physics: PhysicsEngine = PhysicsEngine()
         self.audio: RollingAudioRecorder = RollingAudioRecorder()
+        self.run_logger: RunLogger = RunLogger()
+        self.enable_ticks: bool = enable_ticks and bool(GEMINI_API_KEY)
+        self.gemini: GeminiClient | None = GeminiClient() if self.enable_ticks else None
+        self.tick_loop: TickLoop | None = (
+            TickLoop(
+                client=self.gemini,
+                audio=self.audio,
+                physics=self.physics,
+                run_logger=self.run_logger,
+                broadcast_fn=self.broadcast_json,
+                tick_seconds=TICK_SECONDS,
+            )
+            if self.gemini is not None
+            else None
+        )
+
         self.clients: dict[WebSocket, asyncio.Lock] = {}
         self.pcm_bytes_received: int = 0
         self._physics_task: asyncio.Task[None] | None = None
+        self._tick_task: asyncio.Task[None] | None = None
         self._shove_timer: float = SHOVE_REFRESH_SECONDS
         self._shove_dirty: bool = True
         self._prev_loud: bool = False
 
     def ensure_loop_started(self) -> None:
-        """Start the 30 Hz physics broadcast loop if not already running."""
+        """Start the 30 Hz physics loop and ~3 s Gemini tick loop if not already running."""
         if self._physics_task is None or self._physics_task.done():
             self._physics_task = asyncio.create_task(self._physics_loop(), name="physics_loop")
+        if self.tick_loop is not None and (self._tick_task is None or self._tick_task.done()):
+            self._tick_task = asyncio.create_task(self._tick_runner(), name="tick_loop")
 
     async def stop(self) -> None:
-        """Cancel background physics loop and close session WAV cleanly."""
-        task = self._physics_task
-        self._physics_task = None
-        if task is not None and not task.done():
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        """Cancel background loops and flush/close session WAV + JSONL logs cleanly."""
+        for attr in ("_tick_task", "_physics_task"):
+            task = getattr(self, attr)
+            setattr(self, attr, None)
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        if self.tick_loop is not None:
+            self.tick_loop.negotiate.reset()
+        self.run_logger.close()
         self.audio.close()
+        if self.gemini is not None:
+            try:
+                await self.gemini.aclose()
+            except Exception:
+                pass
         self.clients.clear()
 
     def mark_shove_dirty(self) -> None:
@@ -91,13 +122,16 @@ class SimulationRuntime:
             self.clients.pop(ws, None)
 
     async def reset_crowd(self, seed: int | None = None, condition: str | None = None) -> None:
-        """Re-initialize crowd state, physics engine, and audio recorder; broadcast fresh `init`."""
+        """Re-initialize crowd state, physics, tick loop, logs & recorder; broadcast fresh `init`."""
         next_seed = self.crowd.seed if seed is None else int(seed)
         next_cond = self.crowd.condition if condition is None else str(condition)
         if next_cond not in VALID_CONDITIONS:
             next_cond = self.crowd.condition
         self.crowd = init_crowd(seed=next_seed, condition=next_cond)
         self.physics.reset()
+        if self.tick_loop is not None:
+            self.tick_loop.reset()
+        self.run_logger.close()
         self.audio.close()
         self.audio.clear_buffer()
         self.pcm_bytes_received = 0
@@ -137,6 +171,8 @@ class SimulationRuntime:
             cond = msg.get("condition")
             if cond in VALID_CONDITIONS and cond != self.crowd.condition:
                 self.crowd.condition = cond
+                if self.tick_loop is not None:
+                    self.tick_loop.negotiate.reset()
                 if cond == "shove":
                     self.mark_shove_dirty()
 
@@ -153,7 +189,6 @@ class SimulationRuntime:
             elif action == "pause":
                 self.crowd.playing = False
             elif action == "seek":
-                # Section 6: on seek, clear the rolling audio buffer
                 self.audio.clear_buffer()
                 if "t" in msg and msg["t"] is not None:
                     self.crowd.t = float(msg["t"])
@@ -183,10 +218,13 @@ class SimulationRuntime:
                 }
         return {
             "t": round(self.crowd.t, 3),
+            "tick": self.crowd.tick,
             "playing": self.crowd.playing,
             "condition": self.crowd.condition,
             "seed": self.crowd.seed,
             "w": round(self.crowd.w, 3),
+            "use_dsp_proxy": self.crowd.use_dsp_proxy,
+            "house": self.crowd.house_latest,
             "music_energy": round(self.crowd.music_energy, 3),
             "energy_5s": round(self.crowd.energy_5s, 3),
             "buffered_seconds": round(self.audio.buffered_seconds(), 3),
@@ -194,18 +232,50 @@ class SimulationRuntime:
             "chunks_received": self.audio.chunks_received,
             "pcm_bytes_received": self.pcm_bytes_received,
             "session_wav": str(self.audio.session_wav_path) if self.audio.session_wav_path else None,
+            "run_dir": str(self.run_logger.run_dir) if self.run_logger.run_dir else None,
             "mean_v": round(sum(a.v for a in agents) / n, 4),
             "mean_E": round(sum(a.E for a in agents) / n, 4),
             "mean_rho": round(sum(a.rho for a in agents) / n, 4),
             "mean_H": round(sum(a.H for a in agents) / n, 4),
             "max_H": round(max((a.H for a in agents), default=0.0), 4),
-            "top20_diehard": sum(1 for a in sorted(agents, key=lambda ag: ag.y)[:20] if a.archetype == "diehard"),
+            "top20_diehard": sum(
+                1 for a in sorted(agents, key=lambda ag: ag.y)[:20] if a.archetype == "diehard"
+            ),
             "exhausted_count": sum(1 for a in agents if a.exhausted),
             "resting_or_retreating": sum(1 for a in agents if a.action in ("rest", "retreat")),
             "pushing_count": sum(1 for a in agents if a.action == "push"),
-            "max_stall_sec": round(float(self.physics._stall_time.max()) if self.physics._stall_time.size else 0.0, 3),
+            "max_stall_sec": round(
+                float(self.physics._stall_time.max()) if self.physics._stall_time.size else 0.0, 3
+            ),
             "by_archetype": by_arch,
+            "tick_stats": self.tick_loop.stats_snapshot() if self.tick_loop else {},
+            "recent_asks": self.tick_loop.recent_asks_log[-10:] if self.tick_loop else [],
         }
+
+    async def _tick_runner(self) -> None:
+        """Periodic ~3 s Gemini tick loop; runs only while playing and >= 1.0 s audio buffered."""
+        assert self.tick_loop is not None
+        last_tick_started = 0.0
+
+        while True:
+            if not self.crowd.playing or self.audio.buffered_seconds() < 1.0:
+                await asyncio.sleep(0.2)
+                continue
+
+            now = time.perf_counter()
+            wait_s = self.tick_loop.tick_seconds - (now - last_tick_started)
+            if last_tick_started > 0 and wait_s > 0:
+                await asyncio.sleep(min(wait_s, 0.25))
+                continue
+
+            last_tick_started = time.perf_counter()
+            try:
+                await self.tick_loop.run_once(self.crowd)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.exception("Tick loop error (continuing): %s", exc)
+                await asyncio.sleep(0.5)
 
     async def _physics_loop(self) -> None:
         dt = 1.0 / float(PHYSICS_HZ)
@@ -246,7 +316,7 @@ runtime = SimulationRuntime()
 async def lifespan(app: FastAPI):
     app.state.runtime = runtime
     runtime.ensure_loop_started()
-    logger.info("Simulation runtime started (%d Hz physics)", PHYSICS_HZ)
+    logger.info("Simulation runtime started (%d Hz physics, tick=%.1fs)", PHYSICS_HZ, TICK_SECONDS)
     try:
         yield
     finally:
@@ -280,7 +350,9 @@ async def api_tracks() -> dict[str, list[str]]:
     if not TRACKS_DIR.exists():
         return {"tracks": []}
     files = sorted(
-        p.name for p in TRACKS_DIR.iterdir() if p.is_file() and p.suffix.lower() in {".mp3", ".wav", ".m4a", ".ogg"}
+        p.name
+        for p in TRACKS_DIR.iterdir()
+        if p.is_file() and p.suffix.lower() in {".mp3", ".wav", ".m4a", ".ogg"}
     )
     return {"tracks": files}
 
@@ -323,7 +395,7 @@ async def websocket_endpoint(
     ws: WebSocket,
     autostart: int = Query(default=0),
 ) -> None:
-    """Primary Section 9 WebSocket endpoint streaming init + 30 Hz physics frames."""
+    """Primary Section 9 WebSocket endpoint streaming init, 30 Hz physics, and ~3 s decisions."""
     await ws.accept()
     runtime.ensure_loop_started()
 
@@ -332,7 +404,6 @@ async def websocket_endpoint(
         if runtime.crowd.condition == "shove":
             runtime.mark_shove_dirty()
 
-    # Send `init` before subscribing to broadcasts so it is always the first frame received
     await ws.send_json(runtime.crowd.init_payload())
     runtime.clients[ws] = asyncio.Lock()
     logger.info("WebSocket client connected (clients=%d)", len(runtime.clients))

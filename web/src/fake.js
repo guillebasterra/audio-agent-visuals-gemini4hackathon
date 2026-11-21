@@ -338,8 +338,10 @@ export class FakeCrowd {
 
   _emitFakeDecision() {
     this.tick += 1;
-    const answers = this.pendingAsks.map((id) => ({
-      id,
+    const answers = this.pendingAsks.map((p) => ({
+      id: p.id,
+      from: p.from,
+      to: p.to,
       answer: this.rng() < 0.55 ? "yes" : "no",
     }));
 
@@ -375,18 +377,36 @@ export class FakeCrowd {
       }
     }
 
-    this.pendingAsks = newAsks.map((a) => a.id);
+    this.pendingAsks = newAsks.map((a) => ({ id: a.id, from: a.from, to: a.to }));
+
+    const tired = this.agents.find((a) => a.action === "retreat");
+    const pusher = this.agents.find((a) => a.action === "push" && a.pushiness > 0.7);
+    const notable = [];
+    if (tired) {
+      notable.push({ kind: "exhausted", agent: tired.id, text: `A${tired.id} exhausted, retreating` });
+    }
+    if (pusher) {
+      notable.push({ kind: "push_hard", agent: pusher.id, text: `A${pusher.id} pushes hard` });
+    }
 
     this.onDecision({
       type: "decision",
       t: +this.t.toFixed(2),
       condition: this.condition,
       tick: this.tick,
+      house: {
+        section: this._musicEnergy > 0.62 ? "drop" : "build",
+        p: 0.81,
+        drop_eta: this._musicEnergy > 0.62 ? "now" : "next_8_bars",
+        w: this._musicEnergy > 0.62 ? 3.0 : 1.5,
+      },
       rings: {
-        1: { section: "build", drop_eta: "next_8_bars", p: 0.72 },
+        1: { section: "drop", drop_eta: "now", p: 0.84 },
+        3: { section: "build", drop_eta: "next_8_bars", p: 0.72 },
       },
       asks: newAsks,
       answers,
+      notable,
     });
   }
 }

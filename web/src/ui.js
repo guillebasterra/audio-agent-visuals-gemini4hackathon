@@ -2,14 +2,16 @@
 // Visual TLC plate remains unobstructed as the main thing on screen (plan.md section 10).
 
 export class CrowdUI {
-  constructor({ onTogglePlay, onCondition, onToggleLabels, onSelectFile } = {}) {
+  constructor({ onTogglePlay, onCondition, onToggleLabels, onToggleChat, onSelectFile } = {}) {
     this.onTogglePlay = onTogglePlay || (() => {});
     this.onCondition = onCondition || (() => {});
     this.onToggleLabels = onToggleLabels || (() => {});
+    this.onToggleChat = onToggleChat || (() => {});
     this.onSelectFile = onSelectFile || (() => {});
 
     this.showStats = false;
     this.showPicker = false;
+    this.chatOpen = false;
     this.tracks = [];
     this.selectedTrack = "";
 
@@ -95,6 +97,8 @@ export class CrowdUI {
         transition: opacity 0.4s ease;
       }
       .crowd-hint.quiet { opacity: 0.18; }
+      .crowd-stats.chat-open { right: 292px; }
+      .crowd-hint.chat-open { right: 292px; }
     `;
     document.head.appendChild(style);
   }
@@ -110,8 +114,14 @@ export class CrowdUI {
 
     this.hintEl = document.createElement("div");
     this.hintEl.className = "crowd-hint";
-    this.hintEl.textContent = "Space play · 1/2/3 cond · L labels · D stats · I input";
+    this.hintEl.textContent = "Space play · 1/2/3 cond · C chat · L labels · D stats · I input";
     document.body.appendChild(this.hintEl);
+  }
+
+  setChatOpen(open) {
+    this.chatOpen = Boolean(open);
+    this.statsEl.classList.toggle("chat-open", this.chatOpen);
+    this.hintEl.classList.toggle("chat-open", this.chatOpen);
   }
 
   _bindKeys() {
@@ -126,6 +136,8 @@ export class CrowdUI {
         this.onCondition("silent");
       } else if (e.key === "3") {
         this.onCondition("talk");
+      } else if (e.key === "c" || e.key === "C") {
+        this.onToggleChat();
       } else if (e.key === "l" || e.key === "L") {
         this.onToggleLabels();
       } else if (e.key === "d" || e.key === "D") {

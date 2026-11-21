@@ -135,6 +135,20 @@ export class CrowdColorMapper {
   absorbanceForAgent(H, agentId) {
     return happinessToAbsorbance(this.mapH(H), agentId);
   }
+
+  /**
+   * Readable CSS rgb(...) badge color matching an agent's current TLC pigment on warm paper.
+   */
+  cssColorForAgent(H, agentId) {
+    const [r, g, b] = happinessToSrgb(this.mapH(H), agentId);
+    // Slightly deepen very pale pigments so 11px text stays crisp on #f6ebe6 paper
+    const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    const darken = lum > 0.58 ? 0.68 : 0.88;
+    const R = Math.round(Math.max(0, Math.min(255, r * darken * 255)));
+    const G = Math.round(Math.max(0, Math.min(255, g * darken * 255)));
+    const B = Math.round(Math.max(0, Math.min(255, b * darken * 255)));
+    return `rgb(${R}, ${G}, ${B})`;
+  }
 }
 
 /**

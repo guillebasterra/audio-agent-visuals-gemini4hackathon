@@ -1,7 +1,7 @@
 // DPR-aware Canvas2D overlay: TLC solvent front ("DJ"), origin line + lane letters,
 // agent IDs (A12), and ask negotiation threads (plan.md section 10).
 
-import { computePlateRectCss } from "./plate.js";
+import { AGENT_RADIUS, computePlateRectCss } from "./plate.js";
 
 const DEFAULT_LANE_LABELS = ["B", "C", "E", "G", "H", "L", "M", "P", "S", "Ś"];
 const ASK_LIFETIME_MS = 3000;
@@ -13,9 +13,11 @@ export class OverlayRenderer {
     this.cssWidth = 1;
     this.cssHeight = 1;
     this.dpr = 1;
+    this.rightReservePx = 0;
     this.plateRect = { ox: 0, oy: 0, size: 1 };
     this.laneLabels = DEFAULT_LANE_LABELS;
     this.showLabels = true;
+    this.highlightedIds = [];
     this.resize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
   }
 
@@ -25,14 +27,19 @@ export class OverlayRenderer {
     }
   }
 
-  resize(cssWidth, cssHeight) {
+  setHighlightedAgents(ids) {
+    this.highlightedIds = Array.isArray(ids) ? ids : [];
+  }
+
+  resize(cssWidth, cssHeight, rightReservePx = this.rightReservePx) {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.cssWidth = cssWidth;
     this.cssHeight = cssHeight;
     this.dpr = dpr;
+    this.rightReservePx = rightReservePx;
     this.canvas.width = Math.max(2, Math.round(cssWidth * dpr));
     this.canvas.height = Math.max(2, Math.round(cssHeight * dpr));
-    this.plateRect = computePlateRectCss(cssWidth, cssHeight);
+    this.plateRect = computePlateRectCss(cssWidth, cssHeight, rightReservePx);
   }
 
   _toScreen(xPhys, yPhys) {
@@ -176,16 +183,25 @@ export class OverlayRenderer {
           ctx.stroke();
         }
 
-        // Draw up to 5 clean non-overlapping ask quote labels
-        if (ask.text && placedBoxes.length < 5) {
+        // Draw up to 3 clean non-overlapping ask quote labels (all connector lines still render)
+        if (ask.text && placedBoxes.length < 3) {
           const label = `A${ask.from}→A${ask.to}: ${ask.text}`;
           const textW = ctx.measureText(label).width;
           const textH = 13;
-          const alignRight = mx > ox + size * 0.58;
-          const tx = alignRight ? mx - 7 : mx + 7;
+          const alignRight = mx > ox + size * 0.56;
+          let tx = alignRight ? mx - 7 : mx + 7;
           let ty = my - 5;
 
-          const left = alignRight ? tx - textW : tx;
+          let left = alignRight ? tx - textW : tx;
+          const minLeft = ox + 4;
+          const maxLeft = Math.max(minLeft, ox + size - textW - 4);
+          if (left < minLeft) {
+            left = minLeft;
+            tx = alignRight ? left + textW : left;
+          } else if (left > maxLeft) {
+            left = maxLeft;
+            tx = alignRight ? left + textW : left;
+          }
           // Nudge vertically if overlapping an already-placed ask label
           for (let attempt = 0; attempt < 6; attempt++) {
             const top = ty - textH;
@@ -210,6 +226,43 @@ export class OverlayRenderer {
               : `rgba(38, 32, 36, ${(0.90 * fade).toFixed(3)})`;
           ctx.fillText(label, tx, ty);
         }
+      }
+      ctx.restore();
+    }
+
+    // 5. Chat-hover highlight rings (thin crisp ring around hovered agent(s))
+    if (this.highlightedIds.length > 0) {
+      ctx.save();
+      const ringR = AGENT_RADIUS * 1.22 * size;
+      const pts = [];
+      for (let i = 0; i < this.highlightedIds.length; i++) {
+        const ag = byId.get(this.highlightedIds[i]);
+        if (!ag) continue;
+        const [sx, sy] = this._toScreen(ag.x, ag.y);
+        pts.push([sx, sy]);
+
+        // Soft paper halo + crisp thin dark ring
+        ctx.strokeStyle = "rgba(246, 235, 230, 0.85)";
+        ctx.lineWidth = 3.2;
+        ctx.beginPath();
+        ctx.arc(sx, sy, ringR, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = i === 0 ? "rgba(38, 28, 34, 0.88)" : "rgba(92, 68, 82, 0.78)";
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.arc(sx, sy, ringR, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      if (pts.length === 2) {
+        ctx.strokeStyle = "rgba(42, 34, 38, 0.55)";
+        ctx.lineWidth = 1.0;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        ctx.lineTo(pts[1][0], pts[1][1]);
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
       ctx.restore();
     }

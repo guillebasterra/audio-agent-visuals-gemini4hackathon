@@ -42,6 +42,12 @@ class ApiResult(Generic[T]):
     thought_tokens: int = 0
     total_tokens: int = 0
     error: Optional[str] = None
+    rate_limited: bool = False
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    s = f"{type(exc).__name__}: {exc}".lower()
+    return "429" in s or "rate" in s or "resource_exhausted" in s or "quota" in s
 
 
 def _extract_usage(usage: Any) -> tuple[int, int, int, int]:
@@ -65,7 +71,8 @@ class GeminiClient:
             api_key=api_key,
             http_options={"api_version": "v1beta"},
         )
-        self._sem = asyncio.Semaphore(concurrency)
+        self._decide_sem = asyncio.Semaphore(concurrency)
+        self._interact_sem = asyncio.Semaphore(concurrency)
         self._default_timeout = default_timeout
 
     async def decide(
@@ -80,11 +87,12 @@ class GeminiClient:
         """Run a v1beta Decisions call with semaphore, timeout, and 1 retry."""
         t_limit = self._default_timeout if timeout is None else timeout
         last_err: Optional[str] = None
+        was_rate_limited = False
         t_start = time.perf_counter()
 
         for attempt in range(2):
             try:
-                async with self._sem:
+                async with self._decide_sem:
                     call_start = time.perf_counter()
                     res = await asyncio.wait_for(
                         self._client.aio.decisions.create(
@@ -114,16 +122,19 @@ class GeminiClient:
                     output_tokens=out_tok,
                     thought_tokens=thought_tok,
                     total_tokens=tot_tok,
+                    rate_limited=was_rate_limited,
                 )
             except Exception as exc:
                 last_err = f"{type(exc).__name__}: {exc}"
+                if _is_rate_limit_error(exc):
+                    was_rate_limited = True
                 logger.warning("[%s] attempt %d failed: %s", label, attempt + 1, last_err)
                 if attempt == 0:
-                    await asyncio.sleep(0.4)
+                    await asyncio.sleep(0.8 if was_rate_limited else 0.4)
 
         total_ms = (time.perf_counter() - t_start) * 1000.0
         logger.error("[%s] exhausted retries (%.1fms): %s", label, total_ms, last_err)
-        return ApiResult(ok=False, latency_ms=total_ms, error=last_err)
+        return ApiResult(ok=False, latency_ms=total_ms, error=last_err, rate_limited=was_rate_limited)
 
     async def interact_structured(
         self,
@@ -140,6 +151,7 @@ class GeminiClient:
         """Run a v1beta Interactions call with JSON schema output and Pydantic validation."""
         t_limit = self._default_timeout if timeout is None else timeout
         last_err: Optional[str] = None
+        was_rate_limited = False
         t_start = time.perf_counter()
 
         kwargs: dict[str, Any] = {
@@ -158,7 +170,7 @@ class GeminiClient:
 
         for attempt in range(2):
             try:
-                async with self._sem:
+                async with self._interact_sem:
                     call_start = time.perf_counter()
                     interaction = await asyncio.wait_for(
                         self._client.aio.interactions.create(**kwargs),
@@ -192,16 +204,19 @@ class GeminiClient:
                     output_tokens=out_tok,
                     thought_tokens=thought_tok,
                     total_tokens=tot_tok,
+                    rate_limited=was_rate_limited,
                 )
             except Exception as exc:
                 last_err = f"{type(exc).__name__}: {exc}"
+                if _is_rate_limit_error(exc):
+                    was_rate_limited = True
                 logger.warning("[%s] attempt %d failed: %s", label, attempt + 1, last_err)
                 if attempt == 0:
-                    await asyncio.sleep(0.4)
+                    await asyncio.sleep(0.8 if was_rate_limited else 0.4)
 
         total_ms = (time.perf_counter() - t_start) * 1000.0
         logger.error("[%s] exhausted retries (%.1fms): %s", label, total_ms, last_err)
-        return ApiResult(ok=False, latency_ms=total_ms, error=last_err)
+        return ApiResult(ok=False, latency_ms=total_ms, error=last_err, rate_limited=was_rate_limited)
 
     async def aclose(self) -> None:
         if hasattr(self._client.aio, "aclose"):

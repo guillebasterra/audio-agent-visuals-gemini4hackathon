@@ -60,7 +60,9 @@ class Agent:
     v: float = 0.0
     pressure: float = 0.0
     exhausted: bool = False
+    yield_until: float = 0.0
     last_heard: dict[str, Any] = field(default_factory=dict)
+    action_probs: dict[str, float] = field(default_factory=dict)
 
 
 def dist_to_dj(x: float, y: float) -> float:
@@ -107,11 +109,22 @@ class CrowdState:
     tick: int = 0
     source: str = "file"
     source_label: str = ""
+    kick_times: list[float] = field(default_factory=list)
+    house_latest: dict[str, Any] = field(default_factory=dict)
+    rings_latest: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     def record_yield(self, yielder_id: int, asker_id: int) -> None:
         """Increment yield counter yielded_to[yielder][asker]."""
         bucket = self.yielded_to.setdefault(yielder_id, {})
         bucket[asker_id] = bucket.get(asker_id, 0) + 1
+
+    def yield_count(self, yielder_id: int, asker_id: int) -> int:
+        return int(self.yielded_to.get(yielder_id, {}).get(asker_id, 0))
+
+    def kick_rate(self, window_sec: float = 5.0) -> float:
+        cutoff = self.t - window_sec
+        self.kick_times = [kt for kt in self.kick_times if kt >= cutoff]
+        return len(self.kick_times) / max(window_sec, 1e-3)
 
     def update_dsp(
         self,
@@ -122,13 +135,19 @@ class CrowdState:
     ) -> None:
         """Update playback clock and latest browser DSP features."""
         if t is not None:
-            self.t = float(t)
+            new_t = float(t)
+            if new_t + 1.0 < self.t:
+                self.kick_times.clear()
+            self.t = new_t
         if playing is not None:
             self.playing = bool(playing)
         if source is not None:
             self.source = str(source)
         if dsp is not None:
             self.dsp = dict(dsp)
+            if dsp.get("kick"):
+                if not self.kick_times or (self.t - self.kick_times[-1]) >= 0.12:
+                    self.kick_times.append(self.t)
             if "energy" in dsp and dsp["energy"] is not None:
                 self.music_energy = max(0.0, min(1.0, float(dsp["energy"])))
             if "energy_5s" in dsp and dsp["energy_5s"] is not None:

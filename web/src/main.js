@@ -1,4 +1,4 @@
-// Agent Crowd frontend entry point (Phase C: live WebSocket wiring + ?fake=1 fallback).
+// Agent Crowd frontend entry point (live WebSocket wiring + chat feed + ?fake=1 fallback).
 
 import { PlateRenderer } from "./plate.js";
 import { OverlayRenderer } from "./overlay.js";
@@ -6,6 +6,7 @@ import { AudioEngine } from "./audio.js";
 import { FakeCrowd } from "./fake.js";
 import { CrowdSocket } from "./ws.js";
 import { CrowdUI } from "./ui.js";
+import { ChatFeed, CHAT_PANEL_WIDTH } from "./chat.js";
 
 const params = new URLSearchParams(window.location.search);
 const isFakeMode = params.get("fake") === "1";
@@ -26,7 +27,26 @@ let interpAgents = [];
 let condition = isFakeMode ? "talk" : "shove";
 let asksById = new Map();
 let asksLastTick = 0;
+let decisionsReceived = 0;
 let agentMetaById = new Map();
+let currentAgentById = new Map();
+
+const chat = new ChatFeed({
+  onToggle: (isOpen) => {
+    ui.setChatOpen(isOpen);
+    handleResize();
+  },
+  onHoverAgents: (ids) => {
+    overlay.setHighlightedAgents(ids);
+  },
+});
+chat.setCondition(condition);
+
+function getAgentColorCss(agentId) {
+  const ag = currentAgentById.get(agentId);
+  const h = ag ? ag.H : 0.5;
+  return plate.colorMapper.cssColorForAgent(h, agentId);
+}
 
 function unpackPhysicsAgents(rawAgents) {
   const out = new Array(rawAgents.length);
@@ -58,6 +78,7 @@ function handleInit(msg) {
   }
   prevFrame = null;
   currFrame = null;
+  currentAgentById.clear();
   asksById.clear();
   plate.clearTrails();
 }
@@ -68,6 +89,10 @@ function handlePhysics(msg) {
   prevFrameMs = currFrameMs;
   currFrame = unpackPhysicsAgents(msg.agents || []);
   currFrameMs = now;
+  currentAgentById.clear();
+  for (let i = 0; i < currFrame.length; i++) {
+    currentAgentById.set(currFrame[i].id, currFrame[i]);
+  }
   if (!prevFrame) {
     prevFrame = currFrame;
     prevFrameMs = now - 33.33;
@@ -76,9 +101,18 @@ function handlePhysics(msg) {
 
 function handleDecision(msg) {
   const now = performance.now();
-  if (msg.condition) condition = msg.condition;
+  decisionsReceived += 1;
+  if (msg.condition) {
+    condition = msg.condition;
+    chat.setCondition(condition);
+  }
   const newAsks = msg.asks || [];
-  asksLastTick = newAsks.length;
+  const newAnswers = msg.answers || [];
+  if (newAsks.length > 0) {
+    asksLastTick = newAsks.length;
+  } else if (msg.house) {
+    asksLastTick = newAnswers.length;
+  }
 
   for (const a of newAsks) {
     asksById.set(a.id, {
@@ -87,7 +121,7 @@ function handleDecision(msg) {
       updatedAt: now,
     });
   }
-  for (const ans of msg.answers || []) {
+  for (const ans of newAnswers) {
     const existing = asksById.get(ans.id);
     if (existing) {
       existing.answer = ans.answer;
@@ -99,6 +133,8 @@ function handleDecision(msg) {
       asksById.delete(id);
     }
   }
+
+  chat.ingestDecision(msg, getAgentColorCss);
 }
 
 function getInterpolatedAgents(nowMs) {
@@ -181,6 +217,7 @@ const ui = new CrowdUI({
   },
   onCondition: (cond) => {
     condition = cond;
+    chat.setCondition(cond);
     if (fakeCrowd) fakeCrowd.setCondition(cond);
     if (socket) {
       socket.sendJson({ type: "control", condition: cond });
@@ -188,6 +225,9 @@ const ui = new CrowdUI({
   },
   onToggleLabels: () => {
     overlay.showLabels = !overlay.showLabels;
+  },
+  onToggleChat: () => {
+    chat.toggle();
   },
   onSelectFile: async (url, label) => {
     await audio.loadFile(url, label);
@@ -228,8 +268,9 @@ if (isFakeMode) {
 function handleResize() {
   const w = window.innerWidth;
   const h = window.innerHeight;
-  plate.resize(w, h);
-  overlay.resize(w, h);
+  const rightReservePx = chat.isOpen ? CHAT_PANEL_WIDTH : 0;
+  plate.resize(w, h, rightReservePx);
+  overlay.resize(w, h, rightReservePx);
 }
 window.addEventListener("resize", handleResize);
 handleResize();
@@ -291,7 +332,7 @@ function frame(nowMs) {
 
 requestAnimationFrame(frame);
 
-// Diagnostic hook for headless visual & live A+B verification
+// Diagnostic hook for headless visual & live verification
 window.__agentCrowd = {
   isFakeMode,
   plate,
@@ -299,14 +340,23 @@ window.__agentCrowd = {
   audio,
   socket,
   ui,
+  chat,
   ensureDefaultTrackLoaded,
+  setCondition: (cond) => {
+    condition = cond;
+    chat.setCondition(cond);
+    if (fakeCrowd) fakeCrowd.setCondition(cond);
+    if (socket) socket.sendJson({ type: "control", condition: cond });
+  },
   getMetrics: () => ({
     fps: +fpsSmooth.toFixed(1),
     framesRendered,
     agentCount: currFrame ? currFrame.length : 0,
+    condition,
     useFloatTrails: plate.useFloatTrails,
     wsConnected: socket ? socket.connected : false,
     physicsFramesReceived: socket ? socket.physicsFramesReceived : 0,
+    decisionsReceived,
     clockSent: socket ? socket.clockSent : 0,
     pcmChunksSent: socket ? socket.pcmChunksSent : 0,
     pcmBytesSent: socket ? socket.pcmBytesSent : 0,
@@ -317,5 +367,7 @@ window.__agentCrowd = {
     kicksTotal: audio.kicksTotal,
     dsp: audio.dsp,
     asksActive: asksById.size,
+    chatOpen: chat.isOpen,
+    chatLineCount: chat.lineCount,
   }),
 };

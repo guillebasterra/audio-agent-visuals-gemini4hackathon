@@ -245,10 +245,14 @@ class PhysicsEngine:
 
         self._ensure_agent_arrays(n, crowd.seed)
 
-        # Enforce exhaustion invariant before target computation
+        # Enforce exhaustion & active yield-override invariants before target computation
         for a in agents:
             if a.exhausted:
                 a.action = "retreat"
+                a.pushiness = 0.05
+            elif a.yield_until > crowd.t:
+                a.action = "yield"
+                a.pushiness = 0.05
 
         # 1. Target by action (recompute when action changes or every 0.5 s)
         self._target_timer += dt

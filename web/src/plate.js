@@ -13,12 +13,14 @@ const MAX_AGENTS = 128;
 
 /**
  * Shared square plate transform in CSS pixels so WebGL2 and Canvas2D overlay align pixel-perfectly.
- * Physics y=0 (DJ) maps to top of plateRect; physics y=1 (origin) maps to bottom.
+ * When `rightReservePx > 0` (e.g. chat panel open), fits the plate inside the remaining left region
+ * so the chat panel never covers any agent on the dancefloor.
  */
-export function computePlateRectCss(cssWidth, cssHeight) {
-  const pad = Math.max(12, Math.min(cssWidth, cssHeight) * 0.03);
-  const size = Math.max(64, Math.min(cssWidth, cssHeight) - pad * 2);
-  const ox = (cssWidth - size) * 0.5;
+export function computePlateRectCss(cssWidth, cssHeight, rightReservePx = 0) {
+  const availW = Math.max(120, cssWidth - rightReservePx);
+  const pad = Math.max(12, Math.min(availW, cssHeight) * 0.03);
+  const size = Math.max(64, Math.min(availW, cssHeight) - pad * 2);
+  const ox = (availW - size) * 0.5;
   const oy = (cssHeight - size) * 0.5;
   return { ox, oy, size };
 }
@@ -75,6 +77,7 @@ export class PlateRenderer {
     this.width = 1;
     this.height = 1;
     this.dpr = 1;
+    this.rightReservePx = 0;
     this.plateRectCss = { ox: 0, oy: 0, size: 1 };
 
     // Programs
@@ -205,11 +208,16 @@ export class PlateRenderer {
     this.trails = [null, null];
   }
 
-  resize(cssWidth, cssHeight) {
+  resize(cssWidth, cssHeight, rightReservePx = this.rightReservePx) {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = Math.max(2, Math.round(cssWidth * dpr));
     const h = Math.max(2, Math.round(cssHeight * dpr));
+    const reserveChanged = rightReservePx !== this.rightReservePx;
+    this.rightReservePx = rightReservePx;
+    this.plateRectCss = computePlateRectCss(cssWidth, cssHeight, rightReservePx);
+
     if (w === this.width && h === this.height && dpr === this.dpr && this.trails[0]) {
+      if (reserveChanged) this.clearTrails();
       return;
     }
     this.dpr = dpr;
@@ -217,7 +225,6 @@ export class PlateRenderer {
     this.height = h;
     this.canvas.width = w;
     this.canvas.height = h;
-    this.plateRectCss = computePlateRectCss(cssWidth, cssHeight);
 
     this._destroyTrails();
     this.trails = [this._createTrailTarget(w, h), this._createTrailTarget(w, h)];
