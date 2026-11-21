@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from server.config import AGENT_RADIUS, DJ_BOOTH_Y, PHYSICS_HZ
+from server.config import AGENT_RADIUS, DJ_BOOTH_Y, FLOOR_X_MAX, FLOOR_X_MIN, FLOOR_Y_MAX, PHYSICS_HZ
 from server.physics import PhysicsEngine
 from server.shove import apply_shove_actions
 from server.state import CrowdState, init_crowd
@@ -59,10 +59,10 @@ def _max_wall_violation(crowd: CrowdState) -> float:
         r = a.radius
         worst = max(
             worst,
-            r - a.x,
-            a.x - (1.0 - r),
+            (FLOOR_X_MIN + r) - a.x,
+            a.x - (FLOOR_X_MAX - r),
             (DJ_BOOTH_Y + r) - a.y,
-            a.y - (1.0 - r),
+            a.y - (FLOOR_Y_MAX - r),
         )
     return max(0.0, float(worst))
 

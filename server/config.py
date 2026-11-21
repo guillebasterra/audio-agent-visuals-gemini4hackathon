@@ -19,14 +19,19 @@ MODEL_NEON: str = os.getenv("MODEL_NEON", "gemini-4-neon")
 TRACKS_DIR = ROOT_DIR / "tracks"
 RUNS_DIR = ROOT_DIR / "runs"
 
-# Floor & agents
+# Floor & agents (Phase E3: compact 0.70 x 0.70 floor for denser crowd weaving & bigger visual blobs)
 N_AGENTS: int = 100
 N_LANES: int = 10
+FLOOR_X_MIN: float = 0.15
+FLOOR_X_MAX: float = 0.85
+FLOOR_Y_MIN: float = 0.0
+FLOOR_Y_MAX: float = 0.70
+FLOOR_SPAN: float = 0.70  # isotropic 0.70 x 0.70 floor mapped onto full square TLC plate
 DJ_POS: tuple[float, float] = (0.5, 0.0)  # center reference
-DJ_SEG_X0: float = 0.30  # wider hot-zone segment along the DJ line, x in [0.3, 0.7]
-DJ_SEG_X1: float = 0.70
+DJ_SEG_X0: float = 0.36  # middle 40% of [0.15, 0.85] (unchanged relative to floor width)
+DJ_SEG_X1: float = 0.64
 DJ_BOOTH_Y: float = 0.03
-AGENT_RADIUS: float = 0.030  # base radius; scaled by archetype, proximity, and energy (front diehard ~0.045)
+AGENT_RADIUS: float = 0.027  # base radius on 0.70 floor (~0.0386 plate units -> ~1.29x bigger on screen)
 ARCHETYPE_SIZE_MULT: dict[str, float] = {
     "diehard": 1.20,
     "between": 1.00,
@@ -37,16 +42,16 @@ PHYSICS_HZ: int = 30
 TICK_SECONDS: float = 3.0
 TICK_SECONDS_FALLBACK: float = 4.0
 
-# Rings by distance to DJ segment (edges at 0.2, 0.4, 0.6, 0.8 -> rings 1..5)
-RING_EDGES: tuple[float, ...] = (0.2, 0.4, 0.6, 0.8)
+# Rings by distance to DJ segment, rescaled to 0.70 floor depth (rings 1..5)
+RING_EDGES: tuple[float, ...] = (0.14, 0.28, 0.42, 0.56)
 RING_GAINS: tuple[float, ...] = (1.0, 0.90, 0.75, 0.60, 0.45)
 
-# Movement & collisions (Phase E2: per-agent radii, section-driven movement, soft spring collisions)
-MAX_SPEED: float = 0.115  # units/s * (0.4 + 0.6 * E) * section_speed
+# Movement & collisions (rescaled for compact 0.70 x 0.70 floor)
+MAX_SPEED: float = 0.095  # units/s * (0.4 + 0.6 * E) * section_speed
 COLLISION_ITERATIONS: int = 4
 DENSITY_RADIUS_MULT: float = 2.5
 DENSITY_CAP: int = 8
-MAX_DIST_TO_DJ: float = 1.04403  # sqrt(0.30^2 + 1.0^2) from corner to DJ segment [0.3, 0.7]
+MAX_DIST_TO_DJ: float = 0.73082  # sqrt(0.21^2 + 0.70^2) from corner (0.15, 0.70) to DJ segment [0.36, 0.64]
 
 # Energy constants (per second; Phase E2: front music charge feeds crowd, pushing/long dancing tires)
 ENERGY_A: float = 0.010  # front crush (halved from 0.024)

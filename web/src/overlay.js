@@ -1,10 +1,12 @@
-// DPR-aware Canvas2D overlay: TLC solvent front ("DJ"), origin line + lane letters,
-// agent IDs (A12), and ask negotiation threads (plan.md section 10).
+// DPR-aware Canvas2D overlay: TLC solvent front ("DJ" + hot segment), origin line + lane letters,
+// agent IDs (A12), non-overlapping ask bubbles (max 3, clear of DJ line), and hover highlight rings.
 
 import { AGENT_RADIUS, computePlateRectCss } from "./plate.js";
 
 const DEFAULT_LANE_LABELS = ["B", "C", "E", "G", "H", "L", "M", "P", "S", "Ś"];
+const DEFAULT_FLOOR = { x_min: 0.15, x_max: 0.85, y_min: 0.0, y_max: 0.70, dj_y: 0.03 };
 const ASK_LIFETIME_MS = 3000;
+const MAX_ASK_BUBBLES = 3;
 
 export class OverlayRenderer {
   constructor(canvas) {
@@ -16,7 +18,8 @@ export class OverlayRenderer {
     this.rightReservePx = 0;
     this.plateRect = { ox: 0, oy: 0, size: 1 };
     this.laneLabels = DEFAULT_LANE_LABELS;
-    this.djSegment = [0.3, 0.7];
+    this.floor = { ...DEFAULT_FLOOR };
+    this.djSegment = [0.36, 0.64];
     this.showLabels = true;
     this.highlightedIds = [];
     this.resize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
@@ -31,6 +34,18 @@ export class OverlayRenderer {
   setDjSegment(seg) {
     if (Array.isArray(seg) && seg.length === 2) {
       this.djSegment = [Number(seg[0]), Number(seg[1])];
+    }
+  }
+
+  setFloor(floor) {
+    if (floor && Number.isFinite(floor.x_min) && Number.isFinite(floor.x_max) && floor.x_max > floor.x_min) {
+      this.floor = {
+        x_min: Number(floor.x_min),
+        x_max: Number(floor.x_max),
+        y_min: Number.isFinite(floor.y_min) ? Number(floor.y_min) : 0.0,
+        y_max: Number.isFinite(floor.y_max) ? Number(floor.y_max) : 0.70,
+        dj_y: Number.isFinite(floor.dj_y) ? Number(floor.dj_y) : 0.03,
+      };
     }
   }
 
@@ -49,10 +64,18 @@ export class OverlayRenderer {
     this.plateRect = computePlateRectCss(cssWidth, cssHeight, rightReservePx);
   }
 
+  _floorSpan() {
+    return Math.max(0.1, this.floor.x_max - this.floor.x_min);
+  }
+
   _toScreen(xPhys, yPhys) {
-    // DJ (yPhys = 0) at bottom of screen; origin line (yPhys = 1) at top.
+    // Isotropic map from compact floor [x_min..x_max] x [y_min..y_max] to full square TLC plate;
+    // DJ (y_min) at bottom of screen, origin line (y_max) at top.
     const { ox, oy, size } = this.plateRect;
-    return [ox + xPhys * size, oy + (1.0 - yPhys) * size];
+    const invSpan = 1.0 / this._floorSpan();
+    const nx = (xPhys - this.floor.x_min) * invSpan;
+    const ny = (yPhys - this.floor.y_min) * invSpan;
+    return [ox + nx * size, oy + (1.0 - ny) * size];
   }
 
   render(agents, asks = [], nowMs = performance.now()) {
@@ -61,21 +84,23 @@ export class OverlayRenderer {
     ctx.clearRect(0, 0, this.cssWidth, this.cssHeight);
 
     const { ox, oy, size } = this.plateRect;
+    const invSpan = 1.0 / this._floorSpan();
+    const djNormY = (this.floor.dj_y - this.floor.y_min) * invSpan;
 
-    // 1. Faint pencil DJ line at bottom (y_phys = 0.03 -> screen bottom) + hot-zone segment [0.3, 0.7]
+    // 1. Faint pencil DJ line at bottom + hot-zone segment
     ctx.save();
     ctx.strokeStyle = "rgba(65, 55, 58, 0.22)";
     ctx.lineWidth = 0.9;
-    const djY = oy + (1.0 - 0.03) * size;
+    const djY = oy + (1.0 - djNormY) * size;
     ctx.beginPath();
     ctx.moveTo(ox, djY);
     ctx.lineTo(ox + size, djY);
     ctx.stroke();
 
-    const segX0 = ox + this.djSegment[0] * size;
-    const segX1 = ox + this.djSegment[1] * size;
-    ctx.strokeStyle = "rgba(84, 48, 56, 0.50)";
-    ctx.lineWidth = 1.65;
+    const segX0 = ox + (this.djSegment[0] - this.floor.x_min) * invSpan * size;
+    const segX1 = ox + (this.djSegment[1] - this.floor.x_min) * invSpan * size;
+    ctx.strokeStyle = "rgba(84, 48, 56, 0.52)";
+    ctx.lineWidth = 1.7;
     ctx.beginPath();
     ctx.moveTo(segX0, djY);
     ctx.lineTo(segX1, djY);
@@ -91,7 +116,7 @@ export class OverlayRenderer {
     ctx.textBaseline = "top";
     ctx.fillText("DJ", (segX0 + segX1) * 0.5, djY + 4);
 
-    // 2. Faint pencil origin line at top (y_phys = 0.955 -> screen top) + lane letters
+    // 2. Faint pencil origin line at top + lane letters
     const originY = oy + (1.0 - 0.955) * size;
     ctx.strokeStyle = "rgba(65, 55, 58, 0.26)";
     ctx.lineWidth = 0.9;
@@ -115,7 +140,7 @@ export class OverlayRenderer {
     }
     ctx.restore();
 
-    // Build quick lookup map by agent id for ask threads
+    // Build quick lookup map by agent id
     const byId = new Map();
     for (let i = 0; i < agents.length; i++) {
       byId.set(agents[i].id, agents[i]);
@@ -136,12 +161,10 @@ export class OverlayRenderer {
       ctx.restore();
     }
 
-    // 4. Ask threads: thin graphite line, 10px mono text, fading after 3 s;
-    //    yes -> green-grey, no -> short red tick.
+    // 4. Ask threads + up to 3 non-overlapping ask bubbles strictly clear of the DJ line
     if (asks && asks.length > 0) {
       ctx.save();
       ctx.font = '400 10px "IBM Plex Mono", monospace';
-      // Keep only freshest visible asks and prevent text label overlap
       const visible = asks
         .map((ask) => ({
           ask,
@@ -151,6 +174,9 @@ export class OverlayRenderer {
         .sort((a, b) => a.age - b.age);
 
       const placedBoxes = [];
+      const bubblesToDraw = [];
+      const maxBubbleBottom = djY - 28; // keep ask bubbles strictly clear of DJ line & bottom rail
+      const minBubbleTop = originY + 12;
 
       for (let i = 0; i < visible.length; i++) {
         const { ask, age } = visible[i];
@@ -170,13 +196,13 @@ export class OverlayRenderer {
         const ans = ask.answer || "pending";
         const lineColor =
           ans === "yes"
-            ? `rgba(62, 118, 86, ${(0.84 * fade).toFixed(3)})`
+            ? `rgba(56, 118, 82, ${(0.86 * fade).toFixed(3)})`
             : ans === "no"
               ? `rgba(74, 64, 68, ${(0.72 * fade).toFixed(3)})`
-              : `rgba(52, 46, 50, ${(0.76 * fade).toFixed(3)})`;
+              : `rgba(52, 46, 50, ${(0.78 * fade).toFixed(3)})`;
 
         ctx.strokeStyle = lineColor;
-        ctx.lineWidth = ans === "yes" ? 1.35 : 1.05;
+        ctx.lineWidth = ans === "yes" ? 1.45 : 1.05;
         ctx.beginPath();
         ctx.moveTo(x1, y1);
         ctx.lineTo(x2, y2);
@@ -185,7 +211,7 @@ export class OverlayRenderer {
         // Small endpoint dot on asker
         ctx.fillStyle = lineColor;
         ctx.beginPath();
-        ctx.arc(x1, y1, 2.0, 0, Math.PI * 2);
+        ctx.arc(x1, y1, 2.1, 0, Math.PI * 2);
         ctx.fill();
 
         // Short red tick across midpoint when answer === "no"
@@ -203,54 +229,102 @@ export class OverlayRenderer {
           ctx.stroke();
         }
 
-        // Draw up to 3 clean non-overlapping ask quote labels (all connector lines still render)
-        if (ask.text && placedBoxes.length < 3) {
-          const label = `A${ask.from}→A${ask.to}: ${ask.text}`;
+        // Schedule up to 3 strictly non-overlapping bubbles clear of the DJ line
+        if (ask.text && placedBoxes.length < MAX_ASK_BUBBLES) {
+          const rawLabel = `A${ask.from}→A${ask.to}: ${ask.text}`;
+          const maxLabelW = Math.min(size * 0.72, 420);
+          let label = rawLabel;
+          while (label.length > 24 && ctx.measureText(label).width > maxLabelW) {
+            label = label.slice(0, -2) + "…";
+          }
+          const padX = 6;
+          const padY = 3;
           const textW = ctx.measureText(label).width;
-          const textH = 13;
-          const alignRight = mx > ox + size * 0.56;
-          let tx = alignRight ? mx - 7 : mx + 7;
-          let ty = my - 5;
+          const boxW = textW + padX * 2;
+          const boxH = 12 + padY * 2;
 
-          let left = alignRight ? tx - textW : tx;
-          const minLeft = ox + 4;
-          const maxLeft = Math.max(minLeft, ox + size - textW - 4);
-          if (left < minLeft) {
-            left = minLeft;
-            tx = alignRight ? left + textW : left;
-          } else if (left > maxLeft) {
-            left = maxLeft;
-            tx = alignRight ? left + textW : left;
+          const minLeft = ox + 6;
+          const maxLeft = Math.max(minLeft, ox + size - boxW - 6);
+          const prefLeft = Math.max(minLeft, Math.min(maxLeft, mx - boxW * 0.5));
+          const prefBottom = Math.min(maxBubbleBottom, my - 10);
+
+          const overlapsAny = (l, t, r, b) =>
+            placedBoxes.some((p) => l < p.right + 6 && r > p.left - 6 && t < p.bottom + 5 && b > p.top - 5);
+
+          let chosen = null;
+          // Scan upward from preferred position (with slight horizontal offsets) so bubbles never overlap
+          const xCandidates = [
+            prefLeft,
+            Math.max(minLeft, Math.min(maxLeft, prefLeft - boxW * 0.35)),
+            Math.max(minLeft, Math.min(maxLeft, prefLeft + boxW * 0.35)),
+          ];
+          for (let row = 0; row < 14 && !chosen; row++) {
+            const bottom = prefBottom - row * (boxH + 6);
+            const top = bottom - boxH;
+            if (top < minBubbleTop) break;
+            for (const left of xCandidates) {
+              const right = left + boxW;
+              if (!overlapsAny(left, top, right, bottom)) {
+                chosen = { left, top, right, bottom };
+                break;
+              }
+            }
           }
-          // Nudge vertically if overlapping an already-placed ask label
-          for (let attempt = 0; attempt < 6; attempt++) {
-            const top = ty - textH;
-            const overlaps = placedBoxes.some(
-              (b) => left < b.right + 4 && left + textW > b.left - 4 && top < b.bottom + 2 && ty > b.top - 2
-            );
-            if (!overlaps) break;
-            ty += attempt % 2 === 0 ? -(textH + 4) : (textH + 4) * Math.ceil((attempt + 1) / 2);
+
+          if (chosen) {
+            placedBoxes.push(chosen);
+            bubblesToDraw.push({
+              box: chosen,
+              label,
+              padX,
+              padY,
+              mx,
+              my,
+              ans,
+              fade,
+            });
           }
-
-          placedBoxes.push({ left, right: left + textW, top: ty - textH, bottom: ty });
-          ctx.textAlign = alignRight ? "right" : "left";
-          ctx.textBaseline = "bottom";
-
-          ctx.lineWidth = 3.2;
-          ctx.strokeStyle = `rgba(246, 235, 230, ${(0.88 * fade).toFixed(3)})`;
-          ctx.strokeText(label, tx, ty);
-
-          ctx.fillStyle =
-            ans === "yes"
-              ? `rgba(46, 98, 68, ${(0.95 * fade).toFixed(3)})`
-              : `rgba(38, 32, 36, ${(0.90 * fade).toFixed(3)})`;
-          ctx.fillText(label, tx, ty);
         }
       }
+
+      // Draw crisp translucent paper pills on top of connector lines
+      for (const b of bubblesToDraw) {
+        const { left, top, right, bottom } = b.box;
+        const cx = (left + right) * 0.5;
+        // Subtle leader line if bubble was offset noticeably above its speaker midpoint
+        if (b.my - bottom > 16) {
+          ctx.strokeStyle = `rgba(60, 50, 54, ${(0.32 * b.fade).toFixed(3)})`;
+          ctx.lineWidth = 0.8;
+          ctx.beginPath();
+          ctx.moveTo(b.mx, b.my);
+          ctx.lineTo(Math.max(left + 8, Math.min(right - 8, b.mx)), bottom);
+          ctx.stroke();
+        }
+
+        ctx.fillStyle = `rgba(246, 235, 230, ${(0.88 * b.fade).toFixed(3)})`;
+        ctx.strokeStyle =
+          b.ans === "yes"
+            ? `rgba(48, 110, 74, ${(0.55 * b.fade).toFixed(3)})`
+            : `rgba(55, 45, 48, ${(0.22 * b.fade).toFixed(3)})`;
+        ctx.lineWidth = 0.9;
+        ctx.beginPath();
+        ctx.roundRect(left, top, right - left, bottom - top, 3);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle =
+          b.ans === "yes"
+            ? `rgba(38, 94, 62, ${(0.96 * b.fade).toFixed(3)})`
+            : `rgba(34, 28, 32, ${(0.92 * b.fade).toFixed(3)})`;
+        ctx.fillText(b.label, left + b.padX, (top + bottom) * 0.5 + 0.5);
+      }
+
       ctx.restore();
     }
 
-    // 5. Chat-hover highlight rings (thin crisp ring fitted to each agent's current radius)
+    // 5. Chat-hover highlight rings (thin crisp ring fitted to each agent's scaled radius)
     if (this.highlightedIds.length > 0) {
       ctx.save();
       const pts = [];
@@ -258,10 +332,10 @@ export class OverlayRenderer {
         const ag = byId.get(this.highlightedIds[i]);
         if (!ag) continue;
         const [sx, sy] = this._toScreen(ag.x, ag.y);
-        const ringR = (Number.isFinite(ag.r) && ag.r > 0.005 ? ag.r : AGENT_RADIUS) * 1.28 * size;
+        const rNorm = (Number.isFinite(ag.r) && ag.r > 0.004 ? ag.r : AGENT_RADIUS) * invSpan;
+        const ringR = rNorm * 1.28 * size;
         pts.push([sx, sy]);
 
-        // Soft paper halo + crisp thin dark ring
         ctx.strokeStyle = "rgba(246, 235, 230, 0.85)";
         ctx.lineWidth = 3.2;
         ctx.beginPath();

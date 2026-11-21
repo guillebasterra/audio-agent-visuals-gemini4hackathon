@@ -74,6 +74,7 @@ class RunLogger:
                 "CONTAGION_KAPPA": config.CONTAGION_KAPPA,
                 "ENERGY_CONTAGION_KAPPA": config.ENERGY_CONTAGION_KAPPA,
                 "DJ_SEG": [config.DJ_SEG_X0, config.DJ_SEG_X1],
+                "FLOOR_BOUNDS": [config.FLOOR_X_MIN, config.FLOOR_X_MAX, config.FLOOR_Y_MIN, config.FLOOR_Y_MAX],
                 "RING_GAINS": list(config.RING_GAINS),
                 "RING_CLIP_SECONDS": config.RING_CLIP_SECONDS,
                 "HOUSE_CLIP_SECONDS": config.HOUSE_CLIP_SECONDS,

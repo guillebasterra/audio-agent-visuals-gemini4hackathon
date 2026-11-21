@@ -17,6 +17,10 @@ from server.config import (
     DJ_POS,
     DJ_SEG_X0,
     DJ_SEG_X1,
+    FLOOR_X_MAX,
+    FLOOR_X_MIN,
+    FLOOR_Y_MAX,
+    FLOOR_Y_MIN,
     MAX_DIST_TO_DJ,
     N_AGENTS,
     N_LANES,
@@ -37,10 +41,10 @@ ARCHETYPE_BASE_TRAITS: dict[str, tuple[float, float]] = {
     "dancer": (0.45, 0.70),
 }
 
-X_MIN: float = AGENT_RADIUS
-X_MAX: float = 1.0 - AGENT_RADIUS
+X_MIN: float = FLOOR_X_MIN + AGENT_RADIUS
+X_MAX: float = FLOOR_X_MAX - AGENT_RADIUS
 Y_MIN: float = DJ_BOOTH_Y + AGENT_RADIUS
-Y_MAX: float = 1.0 - AGENT_RADIUS
+Y_MAX: float = FLOOR_Y_MAX - AGENT_RADIUS
 
 DEFAULT_SECTION_PROBS: dict[str, float] = {
     "drop": 0.0,
@@ -243,6 +247,13 @@ class CrowdState:
             "n_lanes": len(self.lane_labels),
             "lane_labels": list(self.lane_labels),
             "dj_segment": [DJ_SEG_X0, DJ_SEG_X1],
+            "floor": {
+                "x_min": FLOOR_X_MIN,
+                "x_max": FLOOR_X_MAX,
+                "y_min": FLOOR_Y_MIN,
+                "y_max": FLOOR_Y_MAX,
+                "dj_y": DJ_BOOTH_Y,
+            },
             "condition": self.condition,
         }
 
@@ -326,8 +337,8 @@ def init_crowd(
 
     usable_w = X_MAX - X_MIN
     lane_width = usable_w / max(n_lanes, 1)
-    y_back_lo = 0.85
-    y_back_hi = min(0.97, Y_MAX)
+    y_back_lo = FLOOR_Y_MAX - 0.125
+    y_back_hi = min(FLOOR_Y_MAX - 0.02, Y_MAX)
 
     agents: list[Agent] = []
     per_lane = max(1, (n_agents + n_lanes - 1) // n_lanes)
@@ -352,8 +363,8 @@ def init_crowd(
         base_x = lane_center_x + sub_col * (lane_width * 0.36)
         base_y = y_back_lo + sub_row * (y_back_hi - y_back_lo)
 
-        x = float(np.clip(base_x + rng.uniform(-0.009, 0.009), X_MIN, X_MAX))
-        y = float(np.clip(base_y + rng.uniform(-0.008, 0.008), y_back_lo, y_back_hi))
+        x = float(np.clip(base_x + rng.uniform(-0.007, 0.007), X_MIN, X_MAX))
+        y = float(np.clip(base_y + rng.uniform(-0.006, 0.006), y_back_lo, y_back_hi))
 
         agents.append(
             Agent(

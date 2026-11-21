@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 from typing import Any, Awaitable, Callable
 
@@ -61,10 +62,13 @@ class TickLoop:
         self._prev_push: dict[int, float] = {}
         self._prev_exhausted: dict[int, bool] = {}
 
-        # Telemetry
+        # Telemetry & seeded RNG for probabilistic ask sampling
+        self._ans_rng: random.Random = random.Random(1337)
+        self._ans_rng_seed: int | None = None
         self.tick_latencies_ms: list[float] = []
         self.house_latencies_ms: list[float] = []
         self.ring_latencies_ms: list[float] = []
+        self.total_api_calls: int = 0
         self.total_failures: int = 0
         self.total_rate_limits: int = 0
         self.total_tokens: int = 0
@@ -75,12 +79,14 @@ class TickLoop:
     def reset(self) -> None:
         self.wom.reset()
         self.negotiate.reset()
+        self._ans_rng_seed = None
         self._prev_action.clear()
         self._prev_push.clear()
         self._prev_exhausted.clear()
         self.tick_latencies_ms.clear()
         self.house_latencies_ms.clear()
         self.ring_latencies_ms.clear()
+        self.total_api_calls = 0
         self.total_failures = 0
         self.total_rate_limits = 0
         self.total_tokens = 0
@@ -90,6 +96,9 @@ class TickLoop:
 
     def stats_snapshot(self) -> dict[str, Any]:
         h_stats = self.negotiate.consume_metrics_delta()
+        all_calls = self.total_api_calls + h_stats["hydrogen_calls"] + h_stats["hydrogen_failures"]
+        all_fails = self.total_failures + h_stats["hydrogen_failures"]
+        fail_rate = (all_fails / all_calls) if all_calls > 0 else 0.0
         return {
             "ticks_completed": len(self.tick_latencies_ms),
             "tick_latency_p50_ms": round(_percentile(self.tick_latencies_ms, 50), 1),
@@ -97,7 +106,9 @@ class TickLoop:
             "tick_latency_max_ms": round(max(self.tick_latencies_ms), 1) if self.tick_latencies_ms else 0.0,
             "house_p50_ms": round(_percentile(self.house_latencies_ms, 50), 1),
             "ring_p50_ms": round(_percentile(self.ring_latencies_ms, 50), 1),
-            "api_failures": self.total_failures + h_stats["hydrogen_failures"],
+            "api_calls_total": all_calls,
+            "api_failures": all_fails,
+            "api_failure_rate": round(fail_rate, 4),
             "rate_limit_errors": self.total_rate_limits + h_stats["hydrogen_rate_limits"],
             "total_tokens": self.total_tokens + self.negotiate.tokens_total,
             "asks_resolved": self.asks_resolved_total,
@@ -174,6 +185,10 @@ class TickLoop:
         tick_num = crowd.tick
         condition = crowd.condition
 
+        if self._ans_rng_seed != crowd.seed:
+            self._ans_rng_seed = crowd.seed
+            self._ans_rng = random.Random(crowd.seed + 1337)
+
         # Ensure run logger is open in the same folder as session.wav
         if self.run_logger.run_dir is None:
             run_dir = self.audio.ensure_recording(condition=condition, seed=crowd.seed)
@@ -238,6 +253,7 @@ class TickLoop:
                 wom=self.wom,
                 pending_asks=pending_asks,
                 remap_pushiness=self.remap_pushiness,
+                rng=self._ans_rng,
             )
             house_out, ring_outputs = await asyncio.gather(house_coro, rings_coro)
 
@@ -249,6 +265,7 @@ class TickLoop:
         crowd.house_latest = house_out.to_log_dict()
 
         # Track API telemetry
+        tick_calls = 0
         tick_tokens = 0
         tick_in_tok = 0
         tick_out_tok = 0
@@ -257,6 +274,7 @@ class TickLoop:
         rings_ms_list: list[float] = []
 
         if house_out.api is not None:
+            tick_calls += 1
             self.house_latencies_ms.append(house_out.api.latency_ms)
             tick_tokens += house_out.api.total_tokens
             tick_in_tok += house_out.api.input_tokens
@@ -276,6 +294,7 @@ class TickLoop:
 
         for r, r_out in sorted(ring_outputs.items()):
             if r_out.api is not None:
+                tick_calls += 1
                 rings_ms_list.append(r_out.api.latency_ms)
                 self.ring_latencies_ms.append(r_out.api.latency_ms)
                 tick_tokens += r_out.api.total_tokens
@@ -390,11 +409,13 @@ class TickLoop:
 
         wall_ms = (time.perf_counter() - t_start) * 1000.0
         self.tick_latencies_ms.append(wall_ms)
+        self.total_api_calls += tick_calls
         self.total_failures += tick_failures
         self.total_rate_limits += tick_rate_limits
         self.total_tokens += tick_tokens
 
         api_info = {
+            "calls": tick_calls,
             "latency_ms": round(wall_ms, 1),
             "house_ms": round(house_out.api.latency_ms, 1) if house_out.api else 0.0,
             "rings_max_ms": round(max(rings_ms_list), 1) if rings_ms_list else 0.0,

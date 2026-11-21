@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -128,6 +129,7 @@ async def run_ring_decisions(
     pending_asks_for_ring: list[PendingAsk],
     crowd: CrowdState,
     remap_pushiness: bool = PUSHINESS_REMAP,
+    rng: random.Random | None = None,
 ) -> RingDecisionOutput:
     """Execute one Decisions call for a single non-empty ring."""
     questions: dict[str, dict[str, Any]] = build_music_questions(f"r{ring}")
@@ -195,12 +197,14 @@ async def run_ring_decisions(
         }
 
     resolved_asks: list[dict[str, Any]] = []
+    sampler = rng if rng is not None else random
     for qkey, ask in ask_key_map.items():
         ans_obj = answers.get(qkey)
         if ans_obj is None:
             continue
-        p_yes = float(getattr(ans_obj, "noul", 0.5))
-        ans_str = "yes" if p_yes >= 0.5 else "no"
+        p_yes = max(0.0, min(1.0, float(getattr(ans_obj, "noul", 0.5))))
+        # Phase E3: sample yes with probability p instead of hard threshold p >= 0.5
+        ans_str = "yes" if sampler.random() < p_yes else "no"
         resolved_asks.append(
             {
                 "ask": ask,
@@ -230,6 +234,7 @@ async def run_all_rings_parallel(
     wom: WordOfMouth,
     pending_asks: list[PendingAsk],
     remap_pushiness: bool = PUSHINESS_REMAP,
+    rng: random.Random | None = None,
 ) -> dict[int, RingDecisionOutput]:
     """Build ring clips and execute all non-empty ring Decisions calls concurrently."""
     buckets = bucket_agents_by_ring(crowd.agents)
@@ -266,6 +271,7 @@ async def run_all_rings_parallel(
                 pending_asks_for_ring=asks_by_ring[r],
                 crowd=crowd,
                 remap_pushiness=remap_pushiness,
+                rng=rng,
             )
         )
 

@@ -8,9 +8,10 @@ import splatFrag from "./shaders/splat.frag.glsl?raw";
 import compositeFrag from "./shaders/composite.frag.glsl?raw";
 import { CrowdColorMapper } from "./palette.js";
 
-export const AGENT_RADIUS = 0.030;
+export const AGENT_RADIUS = 0.027;
 const MAX_AGENTS = 128;
 const AGENT_TEX_ROWS = 3;
+const DEFAULT_FLOOR = { x_min: 0.15, x_max: 0.85, y_min: 0.0, y_max: 0.70, dj_y: 0.03 };
 
 /**
  * Shared square plate transform in CSS pixels so WebGL2 and Canvas2D overlay align pixel-perfectly.
@@ -107,6 +108,7 @@ export class PlateRenderer {
       dpr: gl.getUniformLocation(this.compProg, "uDpr"),
       time: gl.getUniformLocation(this.compProg, "uTime"),
       trailDecode: gl.getUniformLocation(this.compProg, "uTrailDecode"),
+      djWallY: gl.getUniformLocation(this.compProg, "uDjWallY"),
     };
 
     // Fullscreen empty VAO
@@ -171,6 +173,7 @@ export class PlateRenderer {
     // Per-agent visual spring-damper wobble & DJ-squish state keyed by agent id
     this._blobState = new Map();
     this._prevKickEnv = 0;
+    this.floor = { ...DEFAULT_FLOOR };
 
     // Ping-pong trail FBOs (created in resize)
     this.trails = [null, null];
@@ -249,6 +252,18 @@ export class PlateRenderer {
     this.trailIdx = 0;
   }
 
+  setFloor(floor) {
+    if (floor && Number.isFinite(floor.x_min) && Number.isFinite(floor.x_max) && floor.x_max > floor.x_min) {
+      this.floor = {
+        x_min: Number(floor.x_min),
+        x_max: Number(floor.x_max),
+        y_min: Number.isFinite(floor.y_min) ? Number(floor.y_min) : 0.0,
+        y_max: Number.isFinite(floor.y_max) ? Number(floor.y_max) : 0.70,
+        dj_y: Number.isFinite(floor.dj_y) ? Number(floor.dj_y) : 0.03,
+      };
+    }
+  }
+
   clearTrails() {
     const gl = this.gl;
     gl.clearColor(0, 0, 0, 0);
@@ -276,7 +291,12 @@ export class PlateRenderer {
     this._prevKickEnv = kickEnvelope;
     const dt = Math.min(0.04, Math.max(0.002, dtSec));
 
-    // Pack agent buffers (DJ at bottom: physics y=0 maps directly to GL y=0; origin y=1 maps to top).
+    // Map compact physical floor isotropically onto [0, 1] x [0, 1] plate so blobs read bigger
+    const floorSpan = Math.max(0.1, this.floor.x_max - this.floor.x_min);
+    const invSpan = 1.0 / floorSpan;
+    const djWallNormY = (this.floor.dj_y - this.floor.y_min) * invSpan;
+
+    // Pack agent buffers (DJ at bottom: physics y=0 maps directly to GL y=0; origin y_max maps to top).
     const inst = this.instanceData;
     const tex = this.agentTexData;
     const row1Offset = MAX_AGENTS * 4;
@@ -284,14 +304,14 @@ export class PlateRenderer {
 
     for (let i = 0; i < count; i++) {
       const a = agents[i];
-      const xGl = a.x;
-      const yGl = a.y;
-      const vxGl = a.vx;
-      const vyGl = a.vy;
+      const xGl = (a.x - this.floor.x_min) * invSpan;
+      const yGl = (a.y - this.floor.y_min) * invSpan;
+      const vxGl = a.vx * invSpan;
+      const vyGl = a.vy * invSpan;
       const E = Math.max(0, Math.min(1, a.E));
       const pressure = Math.max(0, a.pressure || 0);
 
-      // Proximity to wider DJ segment [0.3, 0.7] if not already supplied by backend
+      // Proximity to wider DJ segment if not already supplied by backend
       let vProx = a.v;
       if (!Number.isFinite(vProx)) {
         const cx = Math.max(0.3, Math.min(0.7, xGl));
@@ -305,8 +325,11 @@ export class PlateRenderer {
         localMusic = musicEnergy * ringGain;
       }
 
-      // Per-agent radius synced with physics collisions, plus compression bulge and kick pulse
-      const physR = Number.isFinite(a.r) && a.r > 0.005 ? a.r : AGENT_RADIUS * (0.8 + 0.45 * vProx) * (0.85 + 0.15 * E);
+      // Per-agent radius scaled cleanly by 1 / floorSpan so compact floor fills the plate
+      const physR =
+        Number.isFinite(a.r) && a.r > 0.004
+          ? a.r * invSpan
+          : AGENT_RADIUS * invSpan * (0.8 + 0.45 * vProx) * (0.85 + 0.15 * E);
       const bulge = 1.0 + 0.10 * Math.min(1.0, pressure * 12.0);
       const rBase = physR * 1.24 * bulge;
       const pulseScale = 1.0 + 0.14 * localMusic * E + 0.30 * kickEnvelope * localMusic * E;
@@ -319,7 +342,7 @@ export class PlateRenderer {
         this._blobState.set(a.id, bs);
       }
       const pImpulse = Math.max(0, pressure - bs.prevP) * 28.0;
-      const dvImpulse = Math.hypot(vxGl - bs.prevVx, vyGl - bs.prevVy) * 4.5;
+      const dvImpulse = Math.hypot(vxGl - bs.prevVx, vyGl - bs.prevVy) * 4.0;
       const kImpulse = kickDelta * localMusic * E * 3.8;
       const totalImp = Math.min(2.2, pImpulse + dvImpulse + kImpulse);
       bs.prevP = pressure;
@@ -335,11 +358,11 @@ export class PlateRenderer {
       // Mode 3 (organic trefoil wobble): w=25 rad/s, zeta=0.30
       const w3Freq = 25.0;
       const a3 = -w3Freq * w3Freq * bs.w3 - 2.0 * 0.30 * w3Freq * bs.v3;
-      bs.v3 += a3 * dt + totalImp * 0.72 * ((a.id % 2 === 0) ? 1 : -1);
+      bs.v3 += a3 * dt + totalImp * 0.72 * (a.id % 2 === 0 ? 1 : -1);
       bs.w3 = Math.max(-0.13, Math.min(0.13, bs.w3 + bs.v3 * dt));
 
-      // DJ-line squish spring: flattens when pressed against y=0.03, springs back round when moving away
-      const djDist = yGl - 0.03;
+      // DJ-line squish spring: flattens when pressed against djWallNormY, springs back round when moving away
+      const djDist = yGl - djWallNormY;
       const targetSquish = Math.max(0, Math.min(1, (rPulse * 1.18 - djDist) / Math.max(rPulse * 0.65, 0.01)));
       const djFreq = 14.0;
       const djAcc = djFreq * djFreq * (targetSquish - bs.djSquish) - 2.0 * 0.52 * djFreq * bs.djVel;
@@ -453,6 +476,7 @@ export class PlateRenderer {
     gl.uniform1f(this.uComp.dpr, this.dpr);
     gl.uniform1f(this.uComp.time, timeSec);
     gl.uniform1f(this.uComp.trailDecode, trailDecode);
+    gl.uniform1f(this.uComp.djWallY, djWallNormY);
 
     gl.bindVertexArray(this.emptyVao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);

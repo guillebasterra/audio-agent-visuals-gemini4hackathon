@@ -226,9 +226,9 @@ class SimulationRuntime:
                         sum((a.vx * a.vx + a.vy * a.vy) ** 0.5 for a in group) / len(group), 4
                     ),
                 }
-        front_third = [a for a in agents if a.y <= 0.35]
-        mid_third = [a for a in agents if 0.35 < a.y <= 0.68]
-        back_third = [a for a in agents if a.y > 0.68]
+        front_third = [a for a in agents if a.y <= 0.253]
+        mid_third = [a for a in agents if 0.253 < a.y <= 0.477]
+        back_third = [a for a in agents if a.y > 0.477]
 
         def _zone_stats(grp: list[Any]) -> dict[str, float]:
             if not grp:

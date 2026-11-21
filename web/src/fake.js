@@ -123,6 +123,8 @@ export class FakeCrowd {
       type: "init",
       n_lanes: 10,
       lane_labels: LANE_LABELS,
+      dj_segment: [0.3, 0.7],
+      floor: { x_min: 0.0, x_max: 1.0, y_min: 0.0, y_max: 1.0, dj_y: 0.03 },
       agents: this.agents.map((a) => ({
         id: a.id,
         archetype: a.archetype,

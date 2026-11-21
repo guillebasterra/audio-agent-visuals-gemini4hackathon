@@ -89,8 +89,8 @@ class MockGeminiClient:
                 sc = 1.9 if ("keen 0.9" in inst or "keen 1.0" in inst) else 0.8
                 answers[qk] = SimpleNamespace(score=sc, confidence=0.77, probabilities={"0": 0.1, "1": 0.3, "2": 0.6})
             elif "_ans_" in qk:
-                p = 0.78 if self.answer_yes else 0.22
-                answers[qk] = SimpleNamespace(noul=p, confidence=0.81)
+                p = 0.999 if self.answer_yes else 0.001
+                answers[qk] = SimpleNamespace(noul=p, confidence=0.95)
             elif qtype == "noul":
                 answers[qk] = SimpleNamespace(noul=0.5, confidence=0.5)
 
@@ -236,8 +236,8 @@ def test_decide_questions_and_push_remap() -> None:
             # Mark A0 exhausted and place A5 in ring 1 with a pending ask to A6 in ring 1
             crowd.agents[0].exhausted = True
             crowd.agents[0].action = "retreat"
-            crowd.agents[5].x, crowd.agents[5].y = 0.50, 0.14
-            crowd.agents[6].x, crowd.agents[6].y = 0.50, 0.10
+            crowd.agents[5].x, crowd.agents[5].y = 0.50, 0.11
+            crowd.agents[6].x, crowd.agents[6].y = 0.50, 0.08
             assert ring_for_agent(crowd.agents[6]) == 1
 
             pending = [

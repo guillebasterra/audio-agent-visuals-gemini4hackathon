@@ -35,6 +35,9 @@ from server.config import (
     ENERGY_G,
     EXHAUST_RECOVER_E,
     EXHAUST_TRIGGER_E,
+    FLOOR_X_MAX,
+    FLOOR_X_MIN,
+    FLOOR_Y_MAX,
     HAPPINESS_TAU,
     MASS_BASE,
     MASS_PUSH_SCALE,
@@ -49,29 +52,32 @@ from server.config import (
 from server.state import Agent, CrowdState, X_MAX, X_MIN, Y_MAX, Y_MIN, dj_closest_point
 
 GRID_SIZE: int = 10
-PUSH_STEP: float = 0.10
-YIELD_STEP: float = 0.075
-REST_SEARCH_RADIUS: float = 0.28
-RETREAT_Y: float = 0.94
+PUSH_STEP: float = 0.075
+YIELD_STEP: float = 0.055
+REST_SEARCH_RADIUS: float = 0.20
+RETREAT_Y: float = FLOOR_Y_MAX - 0.04  # 0.66 on 0.70 floor
 
 # Soft spring collision parameters (allows ~15-25% squishy overlap in front crush, resolved over frames)
-SOFT_COLLISION_ITERS: int = 4
+SOFT_COLLISION_ITERS: int = 5
 SOFT_SPRING_RATE: float = 0.16  # gentle spring compliance per sub-step
 MAX_OVERLAP_FRAC: float = 0.22  # firm inner core cap at 78% of sum of radii
 
-# Idle Ornstein-Uhlenbeck wander & anti-stall parameters
+# Idle Ornstein-Uhlenbeck wander & anti-stall parameters (rescaled to 0.70 floor)
 OU_TAU: float = 1.6
-OU_SIGMA: float = 0.044
-STALL_SPEED_THRESH: float = 0.006
+OU_SIGMA: float = 0.036
+STALL_SPEED_THRESH: float = 0.005
 STALL_TRIGGER_SEC: float = 1.25
 NUDGE_DECAY_TAU: float = 0.45
 
 _RING_EDGES_ARR = np.array(RING_EDGES, dtype=np.float64)
 _RING_GAINS_ARR = np.array(RING_GAINS, dtype=np.float64)
 
-# Precompute 10x10 density grid cell centers for fast rest/yield lookups
-_CELL_COORDS = (np.arange(GRID_SIZE, dtype=np.float64) + 0.5) / float(GRID_SIZE)
-_CELL_GX, _CELL_GY = np.meshgrid(_CELL_COORDS, _CELL_COORDS, indexing="ij")
+# Precompute 10x10 density grid cell centers over [FLOOR_X_MIN, FLOOR_X_MAX] x [DJ_BOOTH_Y, FLOOR_Y_MAX]
+_GRID_X_SPAN: float = FLOOR_X_MAX - FLOOR_X_MIN
+_GRID_Y_SPAN: float = FLOOR_Y_MAX - DJ_BOOTH_Y
+_CELL_XS = FLOOR_X_MIN + (np.arange(GRID_SIZE, dtype=np.float64) + 0.5) / float(GRID_SIZE) * _GRID_X_SPAN
+_CELL_YS = DJ_BOOTH_Y + (np.arange(GRID_SIZE, dtype=np.float64) + 0.5) / float(GRID_SIZE) * _GRID_Y_SPAN
+_CELL_GX, _CELL_GY = np.meshgrid(_CELL_XS, _CELL_YS, indexing="ij")
 _CELL_CX_FLAT = _CELL_GX.ravel()
 _CELL_CY_FLAT = _CELL_GY.ravel()
 
@@ -80,20 +86,21 @@ def _clamp(val: float, lo: float, hi: float) -> float:
     return lo if val < lo else (hi if val > hi else val)
 
 
-def _cell_index(coord: float) -> int:
-    idx = int(coord * GRID_SIZE)
-    if idx < 0:
-        return 0
-    if idx >= GRID_SIZE:
-        return GRID_SIZE - 1
-    return idx
+def _cell_x_index(x: float) -> int:
+    idx = int(((x - FLOOR_X_MIN) / _GRID_X_SPAN) * GRID_SIZE)
+    return 0 if idx < 0 else (GRID_SIZE - 1 if idx >= GRID_SIZE else idx)
+
+
+def _cell_y_index(y: float) -> int:
+    idx = int(((y - DJ_BOOTH_Y) / _GRID_Y_SPAN) * GRID_SIZE)
+    return 0 if idx < 0 else (GRID_SIZE - 1 if idx >= GRID_SIZE else idx)
 
 
 def _build_density_grid(agents: list[Agent]) -> np.ndarray:
-    """Count agents in each cell of a 10x10 grid over [0, 1]^2."""
+    """Count agents in each cell of a 10x10 grid over the compact walkable floor."""
     grid = np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.int32)
     for a in agents:
-        grid[_cell_index(a.x), _cell_index(a.y)] += 1
+        grid[_cell_x_index(a.x), _cell_y_index(a.y)] += 1
     return grid
 
 
@@ -101,9 +108,9 @@ def _compute_agent_target(agent: Agent, grid: np.ndarray, grid_flat: np.ndarray)
     """Compute target (tx, ty) for a single agent given its current action and 10x10 density grid."""
     x, y = agent.x, agent.y
     action = agent.action
-    r = max(0.015, agent.radius)
-    x_lo, x_hi = r, 1.0 - r
-    y_lo, y_hi = DJ_BOOTH_Y + r, 1.0 - r
+    r = max(0.014, agent.radius)
+    x_lo, x_hi = FLOOR_X_MIN + r, FLOOR_X_MAX - r
+    y_lo, y_hi = DJ_BOOTH_Y + r, FLOOR_Y_MAX - r
 
     if action == "hold" or action == "dance":
         return (x, y)
@@ -139,8 +146,8 @@ def _compute_agent_target(agent: Agent, grid: np.ndarray, grid_flat: np.ndarray)
         c2x = _clamp(x + YIELD_STEP * uy, x_lo, x_hi)
         c2y = _clamp(y + YIELD_STEP * (-ux), y_lo, y_hi)
 
-        d1 = int(grid[_cell_index(c1x), _cell_index(c1y)])
-        d2 = int(grid[_cell_index(c2x), _cell_index(c2y)])
+        d1 = int(grid[_cell_x_index(c1x), _cell_y_index(c1y)])
+        d2 = int(grid[_cell_x_index(c2x), _cell_y_index(c2y)])
         if d1 < d2:
             return (c1x, c1y)
         if d2 < d1:
@@ -472,12 +479,12 @@ class PhysicsEngine:
             v_des[:, 1] += np.sin(phi) * bob_amp
 
             # Soft push away from walls so agents never glue to edges or back line
-            wall_margin = 1.45 * radii
-            wall_strength = 0.048
-            x_lo_w = radii
-            x_hi_w = 1.0 - radii
+            wall_margin = 1.40 * radii
+            wall_strength = 0.040
+            x_lo_w = FLOOR_X_MIN + radii
+            x_hi_w = FLOOR_X_MAX - radii
             y_lo_w = DJ_BOOTH_Y + radii
-            y_hi_w = 1.0 - radii
+            y_hi_w = FLOOR_Y_MAX - radii
 
             d_left = pos[:, 0] - x_lo_w
             d_right = x_hi_w - pos[:, 0]
@@ -519,10 +526,10 @@ class PhysicsEngine:
         min_dist_sq_mat = min_dist_mat * min_dist_mat
         triu_mask = self._get_triu_mask(n)
 
-        x_lo = radii
-        x_hi = 1.0 - radii
+        x_lo = FLOOR_X_MIN + radii
+        x_hi = FLOOR_X_MAX - radii
         y_lo = DJ_BOOTH_Y + radii
-        y_hi = 1.0 - radii
+        y_hi = FLOOR_Y_MAX - radii
 
         for iter_idx in range(SOFT_COLLISION_ITERS):
             dx = pos[:, 0:1] - pos[None, :, 0]
@@ -554,15 +561,32 @@ class PhysicsEngine:
 
                 im_i = inv_mass[ii]
                 im_j = inv_mass[jj]
-                inv_sum = im_i + im_j
+                # A body backed by a wall resists inner-core crushing (wall carries reaction force)
+                wall_eps = 0.004
+                pinned_i = (
+                    (pos[ii, 0] <= x_lo[ii] + wall_eps)
+                    | (pos[ii, 0] >= x_hi[ii] - wall_eps)
+                    | (pos[ii, 1] <= y_lo[ii] + wall_eps)
+                    | (pos[ii, 1] >= y_hi[ii] - wall_eps)
+                )
+                pinned_j = (
+                    (pos[jj, 0] <= x_lo[jj] + wall_eps)
+                    | (pos[jj, 0] >= x_hi[jj] - wall_eps)
+                    | (pos[jj, 1] <= y_lo[jj] + wall_eps)
+                    | (pos[jj, 1] >= y_hi[jj] - wall_eps)
+                )
+                deep_core = pdist < core_dist
+                im_i_eff = np.where(deep_core & pinned_j, np.maximum(im_i, im_j * 0.65), im_i)
+                im_j_eff = np.where(deep_core & pinned_i, np.maximum(im_j, im_i * 0.65), im_j)
+                inv_sum = im_i_eff + im_j_eff
 
                 soft_sep = overlap * SOFT_SPRING_RATE
-                core_stiff = 0.96 if iter_idx >= SOFT_COLLISION_ITERS - 2 else 0.82
+                core_stiff = 0.96 if iter_idx >= SOFT_COLLISION_ITERS - 2 else 0.85
                 core_excess = np.maximum(0.0, core_dist - pdist) * core_stiff
                 sep = np.maximum(soft_sep, core_excess)
 
-                move_i = sep * (im_i / inv_sum)
-                move_j = sep * (im_j / inv_sum)
+                move_i = sep * (im_i_eff / inv_sum)
+                move_j = sep * (im_j_eff / inv_sum)
 
                 np.add.at(pos[:, 0], ii, move_i * nx)
                 np.add.at(pos[:, 1], ii, move_i * ny)

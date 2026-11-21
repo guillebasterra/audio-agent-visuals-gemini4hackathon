@@ -12,6 +12,7 @@ uniform vec4 uPlateRect;     // (ox_px, oy_px, size_px, size_px) in GL framebuff
 uniform float uDpr;
 uniform float uTime;
 uniform float uTrailDecode;  // 1.0 for float FBO, 4.0 for RGBA8 fallback
+uniform float uDjWallY;      // normalized DJ rail Y in plate coords (dj_y / floor_span)
 
 in vec2 vUv;
 out vec4 fragColor;
@@ -136,8 +137,8 @@ void main() {
         dPlanes = (dPlanes > 1e8) ? (dPlane - halfGap) : smin(dPlanes, dPlane - halfGap, kRound);
       }
 
-      // Flatten crisply against the DJ booth rail at the BOTTOM (y_gl = 0.03)
-      float dDjWall = (p.y - 0.03) - halfGap;
+      // Flatten crisply against the DJ booth rail at the BOTTOM (y_gl = uDjWallY)
+      float dDjWall = (p.y - uDjWallY) - halfGap;
       float kDj = mix(kRound, bestR * 0.14, djSquish);
       dPlanes = (dPlanes > 1e8) ? dDjWall : smin(dPlanes, dDjWall, kDj);
 

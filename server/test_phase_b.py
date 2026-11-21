@@ -17,6 +17,9 @@ from server.config import (
     CONTAGION_KAPPA,
     DJ_BOOTH_Y,
     EXHAUST_RECOVER_E,
+    FLOOR_X_MAX,
+    FLOOR_X_MIN,
+    FLOOR_Y_MAX,
     HAPPINESS_TAU,
     MASS_BASE,
     MASS_PUSH_SCALE,
@@ -73,12 +76,12 @@ def test_state_and_seeded_init() -> None:
     for a in c1.agents:
         assert 0.0 <= a.k <= 1.0 and 0.0 <= a.s <= 1.0
         assert X_MIN <= a.x <= X_MAX
-        assert 0.85 <= a.y <= min(0.97, Y_MAX)
+        assert FLOOR_Y_MAX - 0.13 <= a.y <= min(FLOOR_Y_MAX - 0.02, Y_MAX)
         assert 0.0 <= a.v <= 1.0
         assert 0.0 <= a.rho <= 1.0
 
-    # Ring mapping check across all 5 rings
-    ring_probes = [(0.5, 0.10, 1), (0.5, 0.30, 2), (0.5, 0.50, 3), (0.5, 0.70, 4), (0.5, 0.90, 5)]
+    # Ring mapping check across all 5 rings (edges at 0.14, 0.28, 0.42, 0.56)
+    ring_probes = [(0.5, 0.08, 1), (0.5, 0.20, 2), (0.5, 0.35, 3), (0.5, 0.49, 4), (0.5, 0.64, 5)]
     for px, py, expected_ring in ring_probes:
         probe = Agent(id=999, x=px, y=py)
         assert ring_for_agent(probe) == expected_ring, (px, py, dist_to_dj(px, py))
@@ -89,7 +92,7 @@ def test_state_and_seeded_init() -> None:
     assert init_msg["n_lanes"] == 10
     assert len(init_msg["agents"]) == 100
     assert set(init_msg["agents"][0].keys()) == {"id", "archetype", "lane", "k", "s", "size_mult"}
-    assert "dj_segment" in init_msg
+    assert "dj_segment" in init_msg and "floor" in init_msg
 
     phys_msg = c1.physics_payload()
     assert phys_msg["type"] == "physics"
@@ -135,7 +138,7 @@ def test_collision_inverse_mass_and_walls() -> None:
     engine_wall = PhysicsEngine()
     engine_wall.step(crowd_wall, dt=1.0 / PHYSICS_HZ)
     assert wall_agent.y >= DJ_BOOTH_Y + wall_agent.radius - 2e-3
-    assert wall_agent.y <= 1.0 - wall_agent.radius + 2e-3
+    assert wall_agent.y <= FLOOR_Y_MAX - wall_agent.radius + 2e-3
 
     # Yield sidestep picks less dense perpendicular side
     # Agent at (0.5, 0.5) facing DJ (0.5, 0.0) -> perpendicular is left (-x) vs right (+x)
@@ -197,8 +200,8 @@ def test_exhaustion_retreat_and_recovery() -> None:
             break
 
     assert entered_exhausted_t is not None, "Front low-energy agent never triggered exhaustion!"
-    assert recovered_t is not None, f"Exhausted agent never recovered to E >= 0.3 (E={hero.E:.3f}, y={hero.y:.3f})"
-    assert max_retreat_y > 0.45, f"Exhausted agent barely retreated (max_y={max_retreat_y:.3f})"
+    assert recovered_t is not None, f"Exhausted agent never recovered to E >= 0.25 (E={hero.E:.3f}, y={hero.y:.3f})"
+    assert max_retreat_y > 0.34, f"Exhausted agent barely retreated (max_y={max_retreat_y:.3f})"
     print(
         f"PASS: exhausted at t={entered_exhausted_t:.2f}s -> retreated to y={max_retreat_y:.2f} -> "
         f"recovered (E={hero.E:.3f}, exhausted=False) at t={recovered_t:.2f}s"
@@ -208,25 +211,25 @@ def test_exhaustion_retreat_and_recovery() -> None:
 def test_happiness_contagion() -> None:
     print("\n=== 4. HAPPINESS CONTAGION UNIT TEST ===")
     dt = 1.0 / PHYSICS_HZ
-    # Cold agent at (0.50, 0.50) surrounded by 4 warm neighbors within 3 * AGENT_RADIUS (0.084)
-    # Separated by 0.070 (> 2 * AGENT_RADIUS = 0.056 so zero collision, <= 0.084 so within contagion radius)
+    # Cold agent at (0.50, 0.36) surrounded by 4 warm neighbors within 3 * AGENT_RADIUS (0.084)
+    # Separated by 0.068 (> 2 * AGENT_RADIUS so zero collision, <= 0.084 so within contagion radius)
     # Set E=0.0 on cold agents so u=0 (EMA pulls H downward); only contagion can pull cold_near upward!
-    cold_near = Agent(id=0, x=0.50, y=0.50, E=0.0, H=0.10, action="hold", target=(0.50, 0.50))
-    warm_offsets = [(-0.070, 0.0), (0.070, 0.0), (0.0, -0.070), (0.0, 0.070)]
+    cold_near = Agent(id=0, x=0.50, y=0.36, E=0.0, H=0.10, action="hold", target=(0.50, 0.36))
+    warm_offsets = [(-0.068, 0.0), (0.068, 0.0), (0.0, -0.068), (0.0, 0.068)]
     warm_neighbors = [
         Agent(
             id=1 + i,
             x=0.50 + ox,
-            y=0.50 + oy,
+            y=0.36 + oy,
             E=0.0,
             H=0.90,
             action="hold",
-            target=(0.50 + ox, 0.50 + oy),
+            target=(0.50 + ox, 0.36 + oy),
         )
         for i, (ox, oy) in enumerate(warm_offsets)
     ]
     # Isolated control cold agent far away (no neighbors)
-    cold_isolated = Agent(id=9, x=0.10, y=0.90, E=0.0, H=0.10, action="hold", target=(0.10, 0.90))
+    cold_isolated = Agent(id=9, x=0.22, y=0.62, E=0.0, H=0.10, action="hold", target=(0.22, 0.62))
 
     crowd = CrowdState(
         agents=[cold_near, *warm_neighbors, cold_isolated],
@@ -382,8 +385,8 @@ def test_websocket_streaming() -> dict:
                     assert len(row) == 13
                     aid, x, y, vx, vy, E, rho, H, action, pressure, r, v, lm = row
                     assert isinstance(aid, int)
-                    assert r - 2e-3 <= x <= 1.0 - r + 2e-3
-                    assert DJ_BOOTH_Y + r - 2e-3 <= y <= 1.0 - r + 2e-3
+                    assert FLOOR_X_MIN + r - 2e-3 <= x <= FLOOR_X_MAX - r + 2e-3
+                    assert DJ_BOOTH_Y + r - 2e-3 <= y <= FLOOR_Y_MAX - r + 2e-3
                     assert 0.0 <= E <= 1.0
                     assert 0.0 <= rho <= 1.0
                     assert 0.0 <= H <= 1.0

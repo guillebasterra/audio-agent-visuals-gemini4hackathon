@@ -83,6 +83,10 @@ function handleInit(msg) {
   if (msg.dj_segment) {
     overlay.setDjSegment(msg.dj_segment);
   }
+  if (msg.floor) {
+    plate.setFloor(msg.floor);
+    overlay.setFloor(msg.floor);
+  }
   agentMetaById = new Map();
   for (const a of msg.agents || []) {
     agentMetaById.set(a.id, a);
