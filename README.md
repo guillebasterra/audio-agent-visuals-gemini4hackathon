@@ -62,4 +62,7 @@ FastAPI `/ws` WebSocket echo was verified for both JSON text frames and 8,000-by
 
 ## Credits
 
-*(To be updated as renderer shaders and third-party ideas are added in subsequent phases.)*
+- **WebGL ping-pong splat trail architecture**: inspired by Pavel Dobryakov's [WebGL Fluid Simulation](https://github.com/PavelDoGreat/WebGL-Fluid-Simulation) (MIT License).
+- **OKLab color-space interpolation**: Björn Ottosson's [OKLab](https://bottosson.github.io/posts/oklab/) perceptual color transform (MIT / public domain).
+- **Polynomial smooth minimum (`smin`) for rounded packed blob facets**: Inigo Quilez's [smooth minimum](https://iquilezles.org/articles/smin/).
+- **Font**: IBM Plex Mono.
