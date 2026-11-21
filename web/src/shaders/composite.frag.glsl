@@ -30,19 +30,19 @@ void main() {
   vec2 fragPx = gl_FragCoord.xy;
   vec2 p = (fragPx - uPlateRect.xy) / uPlateRect.zw;
 
-  // 1. Trail absorbance (soft translucent TLC elution streaks)
+  // 1. Trail absorbance (soft translucent TLC elution streaks drifting upward away from DJ)
   vec3 rawTrail = texture(uTrailTex, vUv).rgb * uTrailDecode;
-  vec3 trailAbs = 0.24 * 1.35 * tanh(rawTrail / 1.35);
+  vec3 trailAbs = 0.25 * 1.40 * tanh(rawTrail / 1.40);
 
-  // 2. Body pass: soft power-diagram cells that squash into rounded polygons & NEVER merge
+  // 2. Body pass: soft power-diagram cells that deeply squash into rounded polygons & NEVER merge
   vec3 bodyAbs = vec3(0.0);
   float seamMask = 0.0;
 
-  if (uAgentCount > 0 && p.x > -0.06 && p.x < 1.06 && p.y > -0.06 && p.y < 1.06) {
+  if (uAgentCount > 0 && p.x > -0.07 && p.x < 1.07 && p.y > -0.07 && p.y < 1.07) {
     int bestIdx = -1;
     float bestPow = 1e9;
     vec2 bestPos = vec2(0.0);
-    float bestR = 0.028;
+    float bestR = 0.038;
     float bestE = 0.8;
     float bestD2 = 1e9;
 
@@ -63,17 +63,17 @@ void main() {
       }
     }
 
-    float outerReach = bestR * 1.25;
+    float outerReach = bestR * 1.28;
     if (bestIdx >= 0 && bestD2 < outerReach * outerReach) {
       float distCenter = sqrt(bestD2);
       float dCircle = bestR - distCenter;
       float dPlanes = 1e9;
       float minRawPlane = 1e9;
 
-      // ~1.5 CSS px paper-colored gap between touching bodies (half on each side of bisector)
+      // ~1.6 CSS px paper-colored gap between touching bodies (half on each side of bisector)
       float pxInPlate = uDpr / uPlateRect.z;
-      float halfGap = 0.75 * pxInPlate;
-      float kRound = bestR * 0.28;
+      float halfGap = 0.80 * pxInPlate;
+      float kRound = bestR * 0.24;
 
       for (int j = 0; j < 128; j++) {
         if (j >= uAgentCount) break;
@@ -81,7 +81,7 @@ void main() {
         vec4 rowJ = texelFetch(uAgentTex, ivec2(j, 0), 0);
         vec2 diff = rowJ.xy - bestPos;
         float sep2 = dot(diff, diff);
-        float maxRange = bestR + rowJ.z + 0.05;
+        float maxRange = bestR + rowJ.z + 0.06;
         if (sep2 > maxRange * maxRange || sep2 < 1e-8) continue;
 
         vec2 dpJ = p - rowJ.xy;
@@ -91,36 +91,36 @@ void main() {
         dPlanes = (dPlanes > 1e8) ? (dPlane - halfGap) : smin(dPlanes, dPlane - halfGap, kRound);
       }
 
-      // Squash softly against the DJ booth rail (y_gl = 0.97 corresponds to physics y = 0.03)
-      float dDjWall = (0.97 - p.y) - halfGap;
+      // Squash softly against the DJ booth rail at the BOTTOM (y_gl = 0.03 corresponds to physics y = 0.03)
+      float dDjWall = (p.y - 0.03) - halfGap;
       dPlanes = (dPlanes > 1e8) ? dDjWall : smin(dPlanes, dDjWall, kRound);
 
       // Combine free circular boundary with neighbor/wall contact planes via smooth-min
       float dCell = smin(dCircle, dPlanes, kRound);
 
-      // Free outer rims get lush TLC diffusion; contact facets stay distinct & soft-edged
-      float isContactFacet = smoothstep(bestR * 0.32, -bestR * 0.05, dPlanes - dCircle);
-      float outerSoft = max(bestR * 0.44, 4.5 * pxInPlate);
-      float contactSoft = max(bestR * 0.19, 2.5 * pxInPlate);
+      // Free outer rims get lush TLC diffusion; packed facets flatten crisply into rounded polygons
+      float isContactFacet = smoothstep(bestR * 0.34, -bestR * 0.04, dPlanes - dCircle);
+      float outerSoft = max(bestR * 0.42, 4.2 * pxInPlate);
+      float contactSoft = max(bestR * 0.14, 2.0 * pxInPlate);
       float edgeSoft = mix(outerSoft, contactSoft, isContactFacet);
 
       float mask = smoothstep(0.0, edgeSoft, dCell);
 
-      // Richer chromatographic dome core; energy E controls pigment density (core saturation)
+      // Rich TLC core; energy E controls pigment density (tired agents look pale & thin)
       float dome = 0.56 + 0.44 * smoothstep(0.0, bestR * 0.72, dCell);
-      float energyDensity = 0.24 + 1.24 * bestE;
+      float energyDensity = 0.18 + 1.32 * bestE;
 
       vec3 agentAbs = texelFetch(uAgentTex, ivec2(bestIdx, 1), 0).rgb;
       bodyAbs = agentAbs * (mask * dome * energyDensity);
 
-      // Gently reduce trail stain inside active contact gaps without creating a bright halo
+      // Gently lighten trail inside active contact gaps so squashed cells stay distinct
       if (dCircle > -0.002 && minRawPlane < halfGap * 2.0) {
         seamMask = (1.0 - smoothstep(0.0, halfGap * 2.0, minRawPlane)) * smoothstep(-0.002, 0.004, dCircle);
       }
     }
   }
 
-  trailAbs *= (1.0 - 0.22 * seamMask);
+  trailAbs *= (1.0 - 0.24 * seamMask);
 
   // 3. Warm pinkish TLC silica paper (#f6ebe6) + animated grain (+-3.5%) + slight vignette
   vec3 paper = vec3(0.9647, 0.9216, 0.9020);

@@ -60,6 +60,19 @@ Verified with `google-genai==3.6.1` (`v1beta`) using 16 kHz mono PCM WAV slices 
 
 FastAPI `/ws` WebSocket echo was verified for both JSON text frames and 8,000-byte binary Int16 PCM frames (250 ms @ 16 kHz mono) via both `TestClient` and a live `uvicorn` server.
 
+## Visual Mapping (TLC Plate)
+
+- **Orientation:** The renderer displays the **DJ at the bottom** (pencil line labeled `DJ`) and the **origin line with lane letters (`B C E G H L M P S Ś`) at the top**; pigment trails advect upward, away from the DJ. Physics coordinates remain `y = 0` at the DJ and `y = 1` at the back.
+- **Happiness → Hue (`web/src/palette.js`):** Interpolated in OKLab across the TLC dye pigments from `docs/ref/tlc.jpg`, cool to warm:
+  - `0.00` `#b9b3c9` pale grey-violet (unhappy / faded `B2`, `M1`)
+  - `0.22` `#6b6eb8` blue-violet (`E1`, `M2`)
+  - `0.46` `#8a3fa0` purple (`C1`, `L1`, `H1`)
+  - `0.72` `#d12f7a` magenta-pink (`G2`, `S1`, `H4`)
+  - `1.00` `#d9481c` red-orange (`G1`, happiest)
+- **Adaptive contrast + absolute mood:** Each agent's `H` is mapped through a hybrid curve (`56%` relative to the temporally smoothed crowd `p05–p95` spread + `44%` absolute anchor, with a mild S-curve) so the crowd uses the full pigment range even when `H` clusters, while a happy drop still trends warm overall and a quiet breakdown cools down.
+- **Per-agent hue jitter:** Deterministic `±8°` OKLab hue rotation per agent ID so adjacent blobs never look identical.
+- **Energy → Density:** Energy `E` scales Beer–Lambert pigment density (`energyDensity = 0.18 + 1.32·E`), making tired agents pale and thin while fresh agents render rich and saturated.
+
 ## Credits
 
 - **WebGL ping-pong splat trail architecture**: inspired by Pavel Dobryakov's [WebGL Fluid Simulation](https://github.com/PavelDoGreat/WebGL-Fluid-Simulation) (MIT License).

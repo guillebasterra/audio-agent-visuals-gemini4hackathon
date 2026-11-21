@@ -24,7 +24,7 @@ N_AGENTS: int = 100
 N_LANES: int = 10
 DJ_POS: tuple[float, float] = (0.5, 0.0)
 DJ_BOOTH_Y: float = 0.03
-AGENT_RADIUS: float = 0.028
+AGENT_RADIUS: float = 0.036
 PHYSICS_HZ: int = 30
 TICK_SECONDS: float = 3.0
 TICK_SECONDS_FALLBACK: float = 4.0
@@ -39,11 +39,11 @@ DENSITY_RADIUS_MULT: float = 2.5
 DENSITY_CAP: int = 8
 MAX_DIST_TO_DJ: float = 1.118  # sqrt(0.5^2 + 1.0^2)
 
-# Energy constants (per second; tuned in Phase C)
-ENERGY_A: float = 0.028  # front crush
-ENERGY_B: float = 0.008  # push
-ENERGY_D: float = 0.005  # dance
-ENERGY_C: float = 0.052  # rest recovery
+# Energy constants (per second; tuned in Phase C/C2 for bigger AGENT_RADIUS)
+ENERGY_A: float = 0.024  # front crush
+ENERGY_B: float = 0.007  # push
+ENERGY_D: float = 0.004  # dance
+ENERGY_C: float = 0.135  # rest recovery
 EXHAUST_RECOVER_E: float = 0.3
 
 # Mass / pushiness contrast constants (mass = MASS_BASE + MASS_PUSH_SCALE * pushiness^2 * E)

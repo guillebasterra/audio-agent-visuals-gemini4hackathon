@@ -203,6 +203,7 @@ class SimulationRuntime:
             "exhausted_count": sum(1 for a in agents if a.exhausted),
             "resting_or_retreating": sum(1 for a in agents if a.action in ("rest", "retreat")),
             "pushing_count": sum(1 for a in agents if a.action == "push"),
+            "max_stall_sec": round(float(self.physics._stall_time.max()) if self.physics._stall_time.size else 0.0, 3),
             "by_archetype": by_arch,
         }
 

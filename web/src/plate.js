@@ -6,9 +6,9 @@ import decayFrag from "./shaders/decay.frag.glsl?raw";
 import splatVert from "./shaders/splat.vert.glsl?raw";
 import splatFrag from "./shaders/splat.frag.glsl?raw";
 import compositeFrag from "./shaders/composite.frag.glsl?raw";
-import { happinessToAbsorbance } from "./palette.js";
+import { CrowdColorMapper } from "./palette.js";
 
-export const AGENT_RADIUS = 0.028;
+export const AGENT_RADIUS = 0.036;
 const MAX_AGENTS = 128;
 
 /**
@@ -154,6 +154,7 @@ export class PlateRenderer {
     // Ping-pong trail FBOs (created in resize)
     this.trails = [null, null];
     this.trailIdx = 0;
+    this.colorMapper = new CrowdColorMapper();
 
     this.resize(canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
   }
@@ -242,7 +243,10 @@ export class PlateRenderer {
     const gl = this.gl;
     const count = Math.min(agents.length, MAX_AGENTS);
 
-    // Pack agent buffers (flip physics y -> GL y = 1 - y so DJ is at top).
+    // Update smoothed crowd H spread for full-range TLC hue contrast
+    this.colorMapper.updateSpread(agents, dtSec);
+
+    // Pack agent buffers (DJ at bottom: physics y=0 maps directly to GL y=0; origin y=1 maps to top).
     const inst = this.instanceData;
     const tex = this.agentTexData;
     const row1Offset = MAX_AGENTS * 4;
@@ -250,17 +254,17 @@ export class PlateRenderer {
     for (let i = 0; i < count; i++) {
       const a = agents[i];
       const xGl = a.x;
-      const yGl = 1.0 - a.y;
+      const yGl = a.y;
       const vxGl = a.vx;
-      const vyGl = -a.vy;
+      const vyGl = a.vy;
       const E = Math.max(0, Math.min(1, a.E));
       const pressure = Math.max(0, a.pressure || 0);
-      // Section 10 pulse formula with generous soft-body scale (1.28x physics radius)
-      // so touching neighbors press into flat-sided rounded polygons with a ~1.5px gap,
-      // while isolated agents stay soft round TLC spots.
-      const rBase = AGENT_RADIUS * 1.28;
+      // Soft-body visual radius (1.26x physics radius + slight compression bulge) so packed
+      // bodies flatten noticeably into rounded polygons while free agents round out.
+      const bulge = 1.0 + 0.10 * Math.min(1.0, pressure * 12.0);
+      const rBase = AGENT_RADIUS * 1.26 * bulge;
       const rPulse = rBase * (1.0 + 0.15 * musicEnergy * E + 0.25 * kickEnvelope * E);
-      const [ar, ag, ab] = happinessToAbsorbance(a.H);
+      const [ar, ag, ab] = this.colorMapper.absorbanceForAgent(a.H, a.id);
 
       const io = i * this.instanceFloats;
       inst[io] = xGl;

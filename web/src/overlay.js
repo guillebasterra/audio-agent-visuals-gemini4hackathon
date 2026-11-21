@@ -36,8 +36,9 @@ export class OverlayRenderer {
   }
 
   _toScreen(xPhys, yPhys) {
+    // DJ (yPhys = 0) at bottom of screen; origin line (yPhys = 1) at top.
     const { ox, oy, size } = this.plateRect;
-    return [ox + xPhys * size, oy + yPhys * size];
+    return [ox + xPhys * size, oy + (1.0 - yPhys) * size];
   }
 
   render(agents, asks = [], nowMs = performance.now()) {
@@ -47,24 +48,24 @@ export class OverlayRenderer {
 
     const { ox, oy, size } = this.plateRect;
 
-    // 1. Subtle TLC plate framing + faint pencil solvent-front line at top (y = 0.03, "DJ")
+    // 1. Faint pencil DJ line at bottom (y_phys = 0.03 -> screen bottom)
     ctx.save();
-    ctx.strokeStyle = "rgba(65, 55, 58, 0.22)";
+    ctx.strokeStyle = "rgba(65, 55, 58, 0.24)";
     ctx.lineWidth = 0.9;
-    const djY = oy + 0.03 * size;
+    const djY = oy + (1.0 - 0.03) * size;
     ctx.beginPath();
     ctx.moveTo(ox, djY);
     ctx.lineTo(ox + size, djY);
     ctx.stroke();
 
     ctx.font = '500 10px "IBM Plex Mono", monospace';
-    ctx.fillStyle = "rgba(55, 46, 50, 0.58)";
+    ctx.fillStyle = "rgba(55, 46, 50, 0.62)";
     ctx.textAlign = "center";
-    ctx.textBaseline = "bottom";
-    ctx.fillText("DJ", ox + size * 0.5, djY - 4);
+    ctx.textBaseline = "top";
+    ctx.fillText("DJ", ox + size * 0.5, djY + 4);
 
-    // 2. Faint pencil origin line near bottom (y = 0.955) + lane letters
-    const originY = oy + 0.955 * size;
+    // 2. Faint pencil origin line at top (y_phys = 0.955 -> screen top) + lane letters
+    const originY = oy + (1.0 - 0.955) * size;
     ctx.strokeStyle = "rgba(65, 55, 58, 0.26)";
     ctx.lineWidth = 0.9;
     ctx.beginPath();
@@ -74,17 +75,16 @@ export class OverlayRenderer {
 
     const nLanes = this.laneLabels.length;
     ctx.font = '400 11px "IBM Plex Mono", monospace';
-    ctx.fillStyle = "rgba(70, 58, 60, 0.52)";
+    ctx.fillStyle = "rgba(70, 58, 60, 0.54)";
     ctx.textAlign = "center";
-    ctx.textBaseline = "top";
+    ctx.textBaseline = "bottom";
     for (let i = 0; i < nLanes; i++) {
       const lx = ox + ((i + 0.5) / nLanes) * size;
-      // Small vertical pencil tick on origin line
       ctx.beginPath();
       ctx.moveTo(lx, originY - 2.5);
       ctx.lineTo(lx, originY + 2.5);
       ctx.stroke();
-      ctx.fillText(this.laneLabels[i], lx, originY + 5);
+      ctx.fillText(this.laneLabels[i], lx, originY - 5);
     }
     ctx.restore();
 

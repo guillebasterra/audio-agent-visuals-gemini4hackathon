@@ -24,8 +24,8 @@ void main() {
   float pressure = aShape.z;
 
   float speed = length(vel);
-  // Default long axis vertically away from DJ when nearly stationary (TLC streak feel).
-  vec2 dir = (speed > 0.001) ? (vel / speed) : vec2(0.0, -1.0);
+  // Default long axis vertically away from DJ at bottom (upward TLC elution streak).
+  vec2 dir = (speed > 0.001) ? (vel / speed) : vec2(0.0, 1.0);
   vec2 perp = vec2(-dir.y, dir.x);
 
   float longAxis = r * min(1.0 + 6.0 * speed, 2.6);

@@ -1,4 +1,4 @@
-"""30 Hz crowd physics simulation (plan.md section 5)."""
+"""30 Hz crowd physics simulation (plan.md section 5 + Phase C2 liveliness & soft collisions)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import numpy as np
 
 from server.config import (
     AGENT_RADIUS,
-    COLLISION_ITERATIONS,
     CONTAGION_KAPPA,
     CONTAGION_RADIUS_MULT,
     DENSITY_CAP,
@@ -29,10 +28,22 @@ from server.config import (
 from server.state import Agent, CrowdState, X_MAX, X_MIN, Y_MAX, Y_MIN
 
 GRID_SIZE: int = 10
-PUSH_STEP: float = 0.08
-YIELD_STEP: float = 0.06
-REST_SEARCH_RADIUS: float = 0.25
-RETREAT_Y: float = 0.95
+PUSH_STEP: float = 0.10
+YIELD_STEP: float = 0.075
+REST_SEARCH_RADIUS: float = 0.28
+RETREAT_Y: float = 0.94
+
+# Soft spring collision parameters (allows ~15-25% squishy overlap in front crush, resolved over frames)
+SOFT_COLLISION_ITERS: int = 3
+SOFT_SPRING_RATE: float = 0.14  # gentle spring compliance per sub-step
+MAX_OVERLAP_FRAC: float = 0.25  # firm inner core cap at 75% of diameter
+
+# Idle Ornstein-Uhlenbeck wander & anti-stall parameters
+OU_TAU: float = 1.6
+OU_SIGMA: float = 0.042
+STALL_SPEED_THRESH: float = 0.006
+STALL_TRIGGER_SEC: float = 1.25
+NUDGE_DECAY_TAU: float = 0.45
 
 # Precompute 10x10 density grid cell centers for fast rest/yield lookups
 _CELL_COORDS = (np.arange(GRID_SIZE, dtype=np.float64) + 0.5) / float(GRID_SIZE)
@@ -94,7 +105,6 @@ def _compute_agent_target(agent: Agent, grid: np.ndarray, grid_flat: np.ndarray)
             ux, uy = dx / dist, dy / dist
         else:
             ux, uy = 0.0, -1.0
-        # Two perpendicular candidates
         c1x = _clamp(x + YIELD_STEP * (-uy), X_MIN, X_MAX)
         c1y = _clamp(y + YIELD_STEP * ux, Y_MIN, Y_MAX)
         c2x = _clamp(x + YIELD_STEP * uy, X_MIN, X_MAX)
@@ -107,7 +117,6 @@ def _compute_agent_target(agent: Agent, grid: np.ndarray, grid_flat: np.ndarray)
         if d2 < d1:
             return (c2x, c2y)
 
-        # Tie-break: avoid walls (prefer larger actual displacement) and open a lane away from center
         disp1 = math.hypot(c1x - x, c1y - y)
         disp2 = math.hypot(c2x - x, c2y - y)
         if abs(disp1 - disp2) > 1e-3:
@@ -130,7 +139,7 @@ def _compute_agent_target(agent: Agent, grid: np.ndarray, grid_flat: np.ndarray)
         if best_candidates.size == 1:
             idx = int(best_candidates[0])
         else:
-            # Among equally empty/low-density cells, prefer nearby cells slightly away from the DJ
+            # Prefer nearby open cells slightly away from the DJ
             scores = dists[best_candidates] - 0.5 * _CELL_CY_FLAT[best_candidates]
             idx = int(best_candidates[int(np.argmin(scores))])
         return (
@@ -138,34 +147,59 @@ def _compute_agent_target(agent: Agent, grid: np.ndarray, grid_flat: np.ndarray)
             _clamp(float(_CELL_CY_FLAT[idx]), Y_MIN, Y_MAX),
         )
 
-    # Fallback for any unrecognized action
     return (x, y)
 
 
 class PhysicsEngine:
-    """Vectorized 30 Hz crowd physics engine."""
+    """Vectorized 30 Hz crowd physics engine with OU idle wander and soft spring collisions."""
 
     def __init__(
         self,
         target_refresh_seconds: float = 0.5,
-        steer_tau: float = 0.15,
-        arrive_tau: float = 0.20,
-        collision_relax: float = 0.85,
+        steer_tau: float = 0.16,
+        arrive_tau: float = 0.22,
+        enable_wander: bool = True,
     ) -> None:
         self.target_refresh_seconds = target_refresh_seconds
         self.steer_tau = steer_tau
         self.arrive_tau = arrive_tau
-        self.collision_relax = collision_relax
+        self.enable_wander = enable_wander
 
-        self._target_timer: float = target_refresh_seconds  # force initial compute on first step
+        self._target_timer: float = target_refresh_seconds
         self._prev_actions: dict[int, str] = {}
         self._triu_n: int = -1
         self._triu_mask: np.ndarray = np.empty((0, 0), dtype=bool)
 
+        # Per-agent smooth OU noise, stall timers, nudges, and kick envelope
+        self._state_n: int = -1
+        self._state_seed: int = -1
+        self._rng: np.random.Generator = np.random.default_rng(42)
+        self._ou: np.ndarray = np.zeros((0, 2), dtype=np.float64)
+        self._stall_time: np.ndarray = np.zeros(0, dtype=np.float64)
+        self._nudge_vel: np.ndarray = np.zeros((0, 2), dtype=np.float64)
+        self._kick_env: float = 0.0
+        self._dance_phase: float = 0.0
+        self._last_kick_t: float = -1.0
+
     def reset(self) -> None:
-        """Reset internal timers and cached action history."""
+        """Reset internal timers, OU wander state, and cached action history."""
         self._target_timer = self.target_refresh_seconds
         self._prev_actions.clear()
+        self._state_n = -1
+        self._state_seed = -1
+        self._kick_env = 0.0
+        self._dance_phase = 0.0
+        self._last_kick_t = -1.0
+
+    def _ensure_agent_arrays(self, n: int, seed: int) -> None:
+        if self._state_n != n or self._state_seed != seed:
+            self._state_n = n
+            self._state_seed = seed
+            self._rng = np.random.default_rng(seed + 7919)
+            # Start OU slightly dispersed so movement begins smoothly on frame 1
+            self._ou = self._rng.normal(0.0, OU_SIGMA * 0.5, size=(n, 2))
+            self._stall_time = np.zeros(n, dtype=np.float64)
+            self._nudge_vel = np.zeros((n, 2), dtype=np.float64)
 
     def _get_triu_mask(self, n: int) -> np.ndarray:
         if self._triu_n != n:
@@ -209,6 +243,8 @@ class PhysicsEngine:
         if n == 0:
             return
 
+        self._ensure_agent_arrays(n, crowd.seed)
+
         # Enforce exhaustion invariant before target computation
         for a in agents:
             if a.exhausted:
@@ -222,7 +258,7 @@ class PhysicsEngine:
         else:
             self.recompute_targets(crowd, force=False)
 
-        # Pack state into contiguous numpy arrays for fast vectorized physics
+        # Pack state into contiguous numpy arrays
         pos = np.empty((n, 2), dtype=np.float64)
         vel = np.empty((n, 2), dtype=np.float64)
         target = np.empty((n, 2), dtype=np.float64)
@@ -231,6 +267,8 @@ class PhysicsEngine:
         k_arr = np.empty(n, dtype=np.float64)
         s_arr = np.empty(n, dtype=np.float64)
         H = np.empty(n, dtype=np.float64)
+        ids = np.empty(n, dtype=np.float64)
+        wander_scale = np.ones(n, dtype=np.float64)
         is_push = np.zeros(n, dtype=np.float64)
         is_dance = np.zeros(n, dtype=np.float64)
         is_rest_or_retreat = np.zeros(n, dtype=bool)
@@ -248,6 +286,14 @@ class PhysicsEngine:
             k_arr[i] = a.k
             s_arr[i] = a.s
             H[i] = a.H
+            ids[i] = float(a.id)
+            if a.archetype == "dancer":
+                wander_scale[i] = 1.60
+            elif a.archetype == "diehard":
+                wander_scale[i] = 0.55
+            else:
+                wander_scale[i] = 1.00
+
             act = a.action
             if act == "push":
                 is_push[i] = 1.0
@@ -258,7 +304,17 @@ class PhysicsEngine:
             elif act == "hold":
                 is_hold[i] = True
 
-        # 2. Integrate: steer velocity smoothly toward target, clamped to max_speed
+        prev_pos = pos.copy()
+        music_energy = float(crowd.music_energy)
+
+        # Update kick envelope & dance bob phase
+        self._kick_env *= math.exp(-dt / 0.14)
+        if crowd.dsp.get("kick") and (crowd.t - self._last_kick_t > 0.12):
+            self._kick_env = 1.0
+            self._last_kick_t = crowd.t
+        self._dance_phase += dt * (2.0 * math.pi * 2.05)
+
+        # 2. Integrate: target steering + smooth OU idle wander + dance kick bob + soft wall push + nudge
         max_speed = MAX_SPEED * (0.4 + 0.6 * E)
         to_target = target - pos
         dist_target = np.hypot(to_target[:, 0], to_target[:, 1])
@@ -271,28 +327,70 @@ class PhysicsEngine:
             v_des[moving, 0] = to_target[moving, 0] * scale
             v_des[moving, 1] = to_target[moving, 1] * scale
 
+        if self.enable_wander:
+            # Ornstein-Uhlenbeck smooth per-agent wander (always active, >= 30% minimum)
+            ou_decay = math.exp(-dt / OU_TAU)
+            ou_noise_std = OU_SIGMA * math.sqrt(max(0.0, 1.0 - ou_decay * ou_decay))
+            self._ou = self._ou * ou_decay + self._rng.normal(0.0, ou_noise_std, size=(n, 2))
+
+            liveliness = np.maximum(0.30, 0.30 + 0.70 * (0.65 * music_energy + 0.35 * E))
+            wander_amp = liveliness * wander_scale
+            v_des[:, 0] += self._ou[:, 0] * wander_amp
+            v_des[:, 1] += self._ou[:, 1] * wander_amp
+
+            # Agents on `dance` sway & bob rhythmically on the kick
+            if np.any(is_dance > 0.5):
+                d_mask = is_dance > 0.5
+                phi = self._dance_phase + ids[d_mask] * 0.73
+                bob_amp = (0.020 + 0.048 * self._kick_env) * liveliness[d_mask]
+                v_des[d_mask, 0] += np.cos(0.5 * phi) * (0.022 * liveliness[d_mask])
+                v_des[d_mask, 1] += np.sin(phi) * bob_amp
+
+            # Soft push away from walls so agents never glue to edges or back line
+            wall_margin = 1.45 * AGENT_RADIUS
+            wall_strength = 0.048
+            d_left = pos[:, 0] - X_MIN
+            d_right = X_MAX - pos[:, 0]
+            d_top = pos[:, 1] - Y_MIN
+            d_bot = Y_MAX - pos[:, 1]
+
+            v_des[:, 0] += wall_strength * np.square(np.clip((wall_margin - d_left) / wall_margin, 0.0, 1.0))
+            v_des[:, 0] -= wall_strength * np.square(np.clip((wall_margin - d_right) / wall_margin, 0.0, 1.0))
+            v_des[:, 1] -= wall_strength * np.square(np.clip((wall_margin - d_bot) / wall_margin, 0.0, 1.0))
+            # Only softly push non-pushers away from the DJ rail so front diehards stay flush at DJ
+            non_push = 1.0 - is_push
+            v_des[:, 1] += (wall_strength * 0.75 * non_push) * np.square(
+                np.clip((wall_margin - d_top) / wall_margin, 0.0, 1.0)
+            )
+
+            # Decaying anti-stall nudge velocity
+            self._nudge_vel *= math.exp(-dt / NUDGE_DECAY_TAU)
+            v_des += self._nudge_vel
+
         steer_alpha = 1.0 - math.exp(-dt / self.steer_tau)
         vel += steer_alpha * (v_des - vel)
 
         speed = np.hypot(vel[:, 0], vel[:, 1])
-        too_fast = speed > max_speed
+        # Allow a tiny kick-bob / nudge headroom above steady max_speed
+        speed_cap = max_speed * (1.0 + 0.25 * is_dance * self._kick_env)
+        too_fast = speed > speed_cap
         if np.any(too_fast):
-            clamp_scale = max_speed[too_fast] / speed[too_fast]
+            clamp_scale = speed_cap[too_fast] / speed[too_fast]
             vel[too_fast, 0] *= clamp_scale
             vel[too_fast, 1] *= clamp_scale
 
         pos += vel * dt
 
-        # 3. Collide: 4 iterations, brute-force all pairs, inverse-mass split, wall clamp
+        # 3. Soft spring-like collisions (allows ~15-25% squishy overlap, resolved over a few frames)
         pressure = np.zeros(n, dtype=np.float64)
         mass = MASS_BASE + MASS_PUSH_SCALE * (pushiness * pushiness) * E
         inv_mass = 1.0 / mass
         min_dist = 2.0 * AGENT_RADIUS
         min_dist_sq = min_dist * min_dist
+        core_dist = (1.0 - MAX_OVERLAP_FRAC) * min_dist
         triu_mask = self._get_triu_mask(n)
-        relax = self.collision_relax
 
-        for iter_idx in range(COLLISION_ITERATIONS):
+        for iter_idx in range(SOFT_COLLISION_ITERS):
             dx = pos[:, 0:1] - pos[None, :, 0]
             dy = pos[:, 1:2] - pos[None, :, 1]
             dist_sq = dx * dx + dy * dy
@@ -321,7 +419,14 @@ class PhysicsEngine:
                 im_i = inv_mass[ii]
                 im_j = inv_mass[jj]
                 inv_sum = im_i + im_j
-                sep = overlap * relax
+
+                # Soft spring separation resolves gently over frames, with firm inner core floor
+                # capping compression near ~25% overlap so blobs squash & bulge without merging.
+                soft_sep = overlap * SOFT_SPRING_RATE
+                core_stiff = 0.92 if iter_idx == SOFT_COLLISION_ITERS - 1 else 0.75
+                core_excess = np.maximum(0.0, core_dist - pdist) * core_stiff
+                sep = np.maximum(soft_sep, core_excess)
+
                 move_i = sep * (im_i / inv_sum)
                 move_j = sep * (im_j / inv_sum)
 
@@ -330,21 +435,21 @@ class PhysicsEngine:
                 np.add.at(pos[:, 0], jj, -move_j * nx)
                 np.add.at(pos[:, 1], jj, -move_j * ny)
 
-                # Shoulder-slip & jostle on first iteration only so remaining iterations
-                # resolve all overlaps cleanly (< 0.001) while heavy pushers still slip past.
+                # Shoulder-slip & jostle on first iteration so heavier pushers weave past lighter
+                # blockers and packed pushers continuously jostle instead of locking up.
                 if iter_idx == 0:
                     push_pair = np.maximum(is_push[ii], is_push[jj])
                     if np.any(push_pair > 0.0):
                         tx = -ny
                         ty = nx
-                        jostle_sign = np.sin(crowd.t * 3.1 + ii * 1.7 - jj * 2.3)
+                        jostle_sign = np.sin(crowd.t * 3.2 + ii * 1.7 - jj * 2.3)
                         side = np.where(
                             np.abs(pdx) > 1e-4,
                             np.sign(pdx),
                             np.where(jostle_sign >= 0.0, 1.0, -1.0),
                         )
                         mass_diff = np.abs(mass[ii] - mass[jj]) / (mass[ii] + mass[jj])
-                        slip = sep * push_pair * (0.72 * mass_diff * side + 0.38 * jostle_sign)
+                        slip = sep * push_pair * (0.85 * mass_diff * side + 0.50 * jostle_sign)
                         np.add.at(pos[:, 0], ii, slip * tx * (im_i / inv_sum))
                         np.add.at(pos[:, 1], ii, slip * ty * (im_i / inv_sum))
                         np.add.at(pos[:, 0], jj, -slip * tx * (im_j / inv_sum))
@@ -354,12 +459,12 @@ class PhysicsEngine:
                         j_hb = (mass[jj] > mass[ii] * 1.35) & (is_push[jj] > 0.5) & (pos[jj, 1] > pos[ii, 1])
                         if np.any(i_hb):
                             k_idx = np.nonzero(i_hb)[0]
-                            s_y = sep[k_idx] * 0.45 * mass_diff[k_idx]
+                            s_y = sep[k_idx] * 0.55 * mass_diff[k_idx]
                             np.add.at(pos[:, 1], ii[k_idx], -s_y)
                             np.add.at(pos[:, 1], jj[k_idx], +s_y)
                         if np.any(j_hb):
                             k_idx = np.nonzero(j_hb)[0]
-                            s_y = sep[k_idx] * 0.45 * mass_diff[k_idx]
+                            s_y = sep[k_idx] * 0.55 * mass_diff[k_idx]
                             np.add.at(pos[:, 1], jj[k_idx], -s_y)
                             np.add.at(pos[:, 1], ii[k_idx], +s_y)
 
@@ -390,7 +495,39 @@ class PhysicsEngine:
             if np.any(hit_y_hi):
                 vel[hit_y_hi, 1] = np.minimum(vel[hit_y_hi, 1], 0.0)
 
-        # 4. Derive rho and v (compute post-collision pairwise squared distances once)
+        # Anti-stall nudge: if any agent's actual post-collision speed stays near zero, nudge it!
+        actual_vel = (pos - prev_pos) / max(dt, 1e-6)
+        actual_speed = np.hypot(actual_vel[:, 0], actual_vel[:, 1])
+        if self.enable_wander:
+            stalled = actual_speed < STALL_SPEED_THRESH
+            self._stall_time = np.where(stalled, self._stall_time + dt, np.maximum(0.0, self._stall_time - 3.0 * dt))
+            need_nudge = self._stall_time >= STALL_TRIGGER_SEC
+            if np.any(need_nudge):
+                n_idx = np.nonzero(need_nudge)[0]
+                angles = self._rng.uniform(0.0, 2.0 * math.pi, size=n_idx.size)
+                nx_n = np.cos(angles)
+                ny_n = np.sin(angles)
+                # Bias nudge inward if near a wall so it breaks free cleanly
+                near_l = pos[n_idx, 0] < X_MIN + 1.2 * AGENT_RADIUS
+                near_r = pos[n_idx, 0] > X_MAX - 1.2 * AGENT_RADIUS
+                near_t = pos[n_idx, 1] < Y_MIN + 1.2 * AGENT_RADIUS
+                near_b = pos[n_idx, 1] > Y_MAX - 1.2 * AGENT_RADIUS
+                nx_n = np.where(near_l, np.abs(nx_n), np.where(near_r, -np.abs(nx_n), nx_n))
+                ny_n = np.where(near_t, np.abs(ny_n) * 0.35, np.where(near_b, -np.abs(ny_n), ny_n))
+                norm_n = np.maximum(np.hypot(nx_n, ny_n), 1e-6)
+                nudge_mag = 0.055
+                self._nudge_vel[n_idx, 0] = (nx_n / norm_n) * nudge_mag
+                self._nudge_vel[n_idx, 1] = (ny_n / norm_n) * nudge_mag
+                # Also immediately apply a tiny unsticking step so speed resumes right away
+                pos[n_idx, 0] = np.clip(pos[n_idx, 0] + self._nudge_vel[n_idx, 0] * dt * 2.5, X_MIN, X_MAX)
+                pos[n_idx, 1] = np.clip(pos[n_idx, 1] + self._nudge_vel[n_idx, 1] * dt * 2.5, Y_MIN, Y_MAX)
+                self._stall_time[n_idx] = 0.0
+                actual_vel = (pos - prev_pos) / max(dt, 1e-6)
+
+        # Keep reported velocity faithful to real on-screen movement (used for trail elongation)
+        vel = 0.45 * vel + 0.55 * actual_vel
+
+        # 4. Derive rho and v (post-collision pairwise squared distances)
         dx = pos[:, 0:1] - pos[None, :, 0]
         dy = pos[:, 1:2] - pos[None, :, 1]
         dist_sq = dx * dx + dy * dy
@@ -418,7 +555,6 @@ class PhysicsEngine:
             crowd.w = 0.5 + 2.5 * crowd.energy_5s
 
         w = float(crowd.w)
-        music_energy = float(crowd.music_energy)
         denom = np.maximum(k_arr + s_arr, 1e-6)
         u = E * (k_arr * v * w + s_arr * (1.0 - rho) * music_energy) / denom
         u_norm = np.clip(u / 3.0, 0.0, 1.0)
@@ -432,7 +568,6 @@ class PhysicsEngine:
         cont_counts = cont_neighbors.sum(axis=1)
         has_cont = cont_counts > 0
         if np.any(has_cont):
-            # Synchronous neighbor mean computed from pre-contagion H
             neighbor_h_sum = cont_neighbors[has_cont].astype(np.float64) @ H
             mean_h_neighbors = neighbor_h_sum / cont_counts[has_cont]
             H[has_cont] = H[has_cont] + CONTAGION_KAPPA * (mean_h_neighbors - H[has_cont]) * dt
